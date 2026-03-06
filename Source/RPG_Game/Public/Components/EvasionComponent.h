@@ -8,6 +8,8 @@ class ACharacter;
 class UAnimMontage;
 class UCombatStateComponent;
 class UPlayerStatsComponent;
+class USpringArmComponent;
+class UTargetLockComponent;
 
 UENUM(BlueprintType)
 enum class ERPGEvasionType : uint8
@@ -88,6 +90,12 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Evasion|General")
     bool bRotateActorTowardEvasionDirection = true;
 
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Evasion|General")
+    bool bForceOrientRotationToMovementDuringEvasion = false;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Evasion|General")
+    bool bDisableMontageRootMotionDuringEvasion = true;
+
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Evasion|State")
     bool bIsEvading = false;
 
@@ -127,6 +135,15 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Evasion|Dodge")
     UAnimMontage* DodgeMontage = nullptr;
 
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Evasion|Dodge|Camera")
+    bool bOverrideCameraLagDuringDodge = true;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Evasion|Dodge|Camera")
+    bool bDisableCameraLagDuringDodge = true;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Evasion|Dodge|Camera", meta = (ClampMin = "1.0"))
+    float DodgeCameraLagSpeedOverride = 25.0f;
+
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Evasion|Roll", meta = (ClampMin = "0.0"))
     float RollStaminaCost = 28.0f;
 
@@ -153,6 +170,9 @@ public:
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Evasion|Roll")
     UAnimMontage* RollMontage = nullptr;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Evasion|Weapon", meta=(ClampMin="0.01"))
+    float WeaponEvasionStaminaMultiplier = 1.0f;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Evasion|Weight")
     bool bUseWeightRestrictionForRoll = true;
@@ -193,6 +213,18 @@ public:
     UFUNCTION(BlueprintCallable, Category = "Evasion|Weight")
     void SetCurrentEquipWeight(float NewWeight);
 
+    UFUNCTION(BlueprintCallable, Category = "Evasion|Weapon")
+    void SetWeaponEvasionProfile(
+        const FRPGEvasionDirectionalMontages& InDodgeDirectionalMontages,
+        UAnimMontage* InDodgeMontage,
+        const FRPGEvasionDirectionalMontages& InRollDirectionalMontages,
+        UAnimMontage* InRollMontage,
+        bool bInUseDirectionalDodgeMontages = true,
+        bool bInUseDirectionalRollMontages = true);
+
+    UFUNCTION(BlueprintCallable, Category = "Evasion|Weapon")
+    void SetWeaponEvasionTuning(float InStaminaMultiplier = 1.0f);
+
 protected:
     virtual void BeginPlay() override;
 
@@ -200,6 +232,8 @@ private:
     TWeakObjectPtr<ACharacter> CachedCharacter;
     TWeakObjectPtr<UPlayerStatsComponent> CachedStats;
     TWeakObjectPtr<UCombatStateComponent> CachedCombatState;
+    TWeakObjectPtr<USpringArmComponent> CachedSpringArm;
+    TWeakObjectPtr<UTargetLockComponent> CachedTargetLock;
 
     FTimerHandle EvasionEndTimerHandle;
     FTimerHandle DodgeCooldownTimerHandle;
@@ -209,6 +243,14 @@ private:
 
     ERPGEvasionType ActiveEvasionType = ERPGEvasionType::Dodge;
     int32 InvulnerabilityRefCount = 0;
+    bool bSavedCameraLagEnabled = false;
+    float SavedCameraLagSpeed = 0.0f;
+    bool bCameraLagOverrideActive = false;
+    bool bSavedOrientRotationToMovement = false;
+    bool bSavedUseControllerDesiredRotation = false;
+    bool bMovementRotationOverrideActive = false;
+    uint8 SavedAnimRootMotionMode = 0;
+    bool bAnimRootMotionOverrideActive = false;
 
     bool TryStartEvasion(ERPGEvasionType EvasionType);
     bool IsBlockedByCombatState() const;
@@ -217,9 +259,15 @@ private:
     ERPGEvasionDirection ResolveDirectionType(const FVector& WorldDirection) const;
     void ApplyEvasionMovement(ERPGEvasionType EvasionType, const FVector& Direction) const;
     UAnimMontage* ResolveEvasionMontage(ERPGEvasionType EvasionType, ERPGEvasionDirection DirectionType) const;
-    void PlayEvasionMontage(ERPGEvasionType EvasionType, ERPGEvasionDirection DirectionType) const;
+    void PlayEvasionMontage(UAnimMontage* Montage) const;
     void StartCooldown(ERPGEvasionType EvasionType);
     void StartInvulnerabilityWindow(float StartDelay, float Duration);
+    void ApplyCameraLagOverrideForEvasion(ERPGEvasionType EvasionType);
+    void RestoreCameraLagOverride();
+    void ApplyMovementRotationOverrideForEvasion();
+    void RestoreMovementRotationOverride();
+    void ApplyAnimRootMotionOverrideForEvasion();
+    void RestoreAnimRootMotionOverrideForEvasion();
     void BeginInvulnerability();
     void EndInvulnerability();
     void FinishActiveEvasion();
@@ -228,3 +276,4 @@ private:
 
     void BroadcastFail(ERPGEvasionType EvasionType, const FString& Reason);
 };
+

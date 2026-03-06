@@ -3,9 +3,11 @@
 #include "Animation/AnimInstance.h"
 #include "Components/CombatStateComponent.h"
 #include "Components/PlayerStatsComponent.h"
+#include "Components/TargetLockComponent.h"
 #include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/Controller.h"
+#include "GameFramework/SpringArmComponent.h"
 #include "TimerManager.h"
 
 UAnimMontage* FRPGEvasionDirectionalMontages::SelectMontage(ERPGEvasionDirection Direction) const
@@ -45,6 +47,8 @@ void UEvasionComponent::BeginPlay()
     CachedCharacter = Cast<ACharacter>(GetOwner());
     CachedStats = GetOwner() ? GetOwner()->FindComponentByClass<UPlayerStatsComponent>() : nullptr;
     CachedCombatState = GetOwner() ? GetOwner()->FindComponentByClass<UCombatStateComponent>() : nullptr;
+    CachedSpringArm = GetOwner() ? GetOwner()->FindComponentByClass<USpringArmComponent>() : nullptr;
+    CachedTargetLock = GetOwner() ? GetOwner()->FindComponentByClass<UTargetLockComponent>() : nullptr;
 }
 
 bool UEvasionComponent::StartDodge()
@@ -75,6 +79,27 @@ bool UEvasionComponent::CanCombatRollByWeight() const
 void UEvasionComponent::SetCurrentEquipWeight(float NewWeight)
 {
     CurrentEquipWeight = FMath::Max(0.0f, NewWeight);
+}
+
+void UEvasionComponent::SetWeaponEvasionProfile(
+    const FRPGEvasionDirectionalMontages& InDodgeDirectionalMontages,
+    UAnimMontage* InDodgeMontage,
+    const FRPGEvasionDirectionalMontages& InRollDirectionalMontages,
+    UAnimMontage* InRollMontage,
+    bool bInUseDirectionalDodgeMontages,
+    bool bInUseDirectionalRollMontages)
+{
+    DodgeDirectionalMontages = InDodgeDirectionalMontages;
+    DodgeMontage = InDodgeMontage;
+    RollDirectionalMontages = InRollDirectionalMontages;
+    RollMontage = InRollMontage;
+    bUseDirectionalDodgeMontages = bInUseDirectionalDodgeMontages;
+    bUseDirectionalRollMontages = bInUseDirectionalRollMontages;
+}
+
+void UEvasionComponent::SetWeaponEvasionTuning(float InStaminaMultiplier)
+{
+    WeaponEvasionStaminaMultiplier = FMath::Max(0.01f, InStaminaMultiplier);
 }
 
 bool UEvasionComponent::TryStartEvasion(ERPGEvasionType EvasionType)
@@ -130,7 +155,8 @@ bool UEvasionComponent::TryStartEvasion(ERPGEvasionType EvasionType)
         return false;
     }
 
-    const float StaminaCost = EvasionType == ERPGEvasionType::Dodge ? DodgeStaminaCost : RollStaminaCost;
+    const float BaseStaminaCost = EvasionType == ERPGEvasionType::Dodge ? DodgeStaminaCost : RollStaminaCost;
+    const float StaminaCost = BaseStaminaCost * WeaponEvasionStaminaMultiplier;
     if (!ConsumeStamina(StaminaCost))
     {
         BroadcastFail(EvasionType, TEXT("Not enough stamina"));
@@ -146,8 +172,12 @@ bool UEvasionComponent::TryStartEvasion(ERPGEvasionType EvasionType)
     const ERPGEvasionDirection DirectionType = ResolveDirectionType(Direction);
     LastEvasionDirection = DirectionType;
 
+    UAnimMontage* EvasionMontage = ResolveEvasionMontage(EvasionType, DirectionType);
+
+    ApplyMovementRotationOverrideForEvasion();
+    ApplyAnimRootMotionOverrideForEvasion();
     ApplyEvasionMovement(EvasionType, Direction);
-    PlayEvasionMontage(EvasionType, DirectionType);
+    PlayEvasionMontage(EvasionMontage);
 
     bIsEvading = true;
     ActiveEvasionType = EvasionType;
@@ -212,35 +242,38 @@ FVector UEvasionComponent::ResolveEvasionDirection() const
 {
     if (!CachedCharacter.IsValid())
     {
-        return FVector::ForwardVector;
+        return -FVector::ForwardVector;
     }
 
-    FVector Direction = CachedCharacter->GetLastMovementInputVector();
+    FVector Direction = FVector::ZeroVector;
+
+    if (const UCharacterMovementComponent* MoveComp = CachedCharacter->GetCharacterMovement())
+    {
+        Direction = MoveComp->GetCurrentAcceleration();
+    }
 
     if (Direction.IsNearlyZero())
     {
-        if (AController* Controller = CachedCharacter->GetController())
-        {
-            FRotator ControlRotation = Controller->GetControlRotation();
-            ControlRotation.Pitch = 0.0f;
-            ControlRotation.Roll = 0.0f;
-            Direction = ControlRotation.Vector();
-        }
-        else
-        {
-            Direction = CachedCharacter->GetActorForwardVector();
-        }
+        Direction = CachedCharacter->GetPendingMovementInputVector();
     }
 
     Direction.Z = 0.0f;
-    Direction.Normalize();
-
-    if (Direction.IsNearlyZero())
+    if (!Direction.IsNearlyZero())
     {
-        return CachedCharacter->GetActorForwardVector().GetSafeNormal2D();
+        return Direction.GetSafeNormal();
     }
 
-    return Direction;
+    if (CachedTargetLock.IsValid() && CachedTargetLock->IsLockedOn())
+    {
+        FVector AwayFromTarget = CachedCharacter->GetActorLocation() - CachedTargetLock->GetLockTargetLocation();
+        AwayFromTarget.Z = 0.0f;
+        if (!AwayFromTarget.IsNearlyZero())
+        {
+            return AwayFromTarget.GetSafeNormal();
+        }
+    }
+
+    return -CachedCharacter->GetActorForwardVector().GetSafeNormal2D();
 }
 
 ERPGEvasionDirection UEvasionComponent::ResolveDirectionType(const FVector& WorldDirection) const
@@ -306,11 +339,6 @@ void UEvasionComponent::ApplyEvasionMovement(ERPGEvasionType EvasionType, const 
         const FRotator FacingRotation(0.0f, Direction.Rotation().Yaw, 0.0f);
         CachedCharacter->SetActorRotation(FacingRotation);
     }
-
-    if (UCharacterMovementComponent* MoveComp = CachedCharacter->GetCharacterMovement())
-    {
-        MoveComp->bOrientRotationToMovement = true;
-    }
 }
 
 UAnimMontage* UEvasionComponent::ResolveEvasionMontage(ERPGEvasionType EvasionType, ERPGEvasionDirection DirectionType) const
@@ -339,9 +367,9 @@ UAnimMontage* UEvasionComponent::ResolveEvasionMontage(ERPGEvasionType EvasionTy
     return RollMontage;
 }
 
-void UEvasionComponent::PlayEvasionMontage(ERPGEvasionType EvasionType, ERPGEvasionDirection DirectionType) const
+void UEvasionComponent::PlayEvasionMontage(UAnimMontage* Montage) const
 {
-    if (!CachedCharacter.IsValid() || !CachedCharacter->GetMesh())
+    if (!CachedCharacter.IsValid() || !CachedCharacter->GetMesh() || !Montage)
     {
         return;
     }
@@ -352,10 +380,7 @@ void UEvasionComponent::PlayEvasionMontage(ERPGEvasionType EvasionType, ERPGEvas
         return;
     }
 
-    if (UAnimMontage* Montage = ResolveEvasionMontage(EvasionType, DirectionType))
-    {
-        AnimInstance->Montage_Play(Montage);
-    }
+    AnimInstance->Montage_Play(Montage);
 }
 
 void UEvasionComponent::StartCooldown(ERPGEvasionType EvasionType)
@@ -429,6 +454,115 @@ void UEvasionComponent::StartInvulnerabilityWindow(float StartDelay, float Durat
         false);
 }
 
+void UEvasionComponent::ApplyCameraLagOverrideForEvasion(ERPGEvasionType EvasionType)
+{
+    if (EvasionType != ERPGEvasionType::Dodge || !bOverrideCameraLagDuringDodge || !CachedSpringArm.IsValid())
+    {
+        return;
+    }
+
+    USpringArmComponent* SpringArm = CachedSpringArm.Get();
+    if (!SpringArm)
+    {
+        return;
+    }
+
+    bSavedCameraLagEnabled = SpringArm->bEnableCameraLag;
+    SavedCameraLagSpeed = SpringArm->CameraLagSpeed;
+
+    if (bDisableCameraLagDuringDodge)
+    {
+        SpringArm->bEnableCameraLag = false;
+    }
+    else
+    {
+        SpringArm->bEnableCameraLag = true;
+        SpringArm->CameraLagSpeed = FMath::Max(1.0f, DodgeCameraLagSpeedOverride);
+    }
+
+    bCameraLagOverrideActive = true;
+}
+
+void UEvasionComponent::RestoreCameraLagOverride()
+{
+    if (!bCameraLagOverrideActive || !CachedSpringArm.IsValid())
+    {
+        return;
+    }
+
+    if (USpringArmComponent* SpringArm = CachedSpringArm.Get())
+    {
+        SpringArm->bEnableCameraLag = bSavedCameraLagEnabled;
+        SpringArm->CameraLagSpeed = SavedCameraLagSpeed;
+    }
+
+    bCameraLagOverrideActive = false;
+}
+
+void UEvasionComponent::ApplyMovementRotationOverrideForEvasion()
+{
+    if (!CachedCharacter.IsValid() || !bForceOrientRotationToMovementDuringEvasion)
+    {
+        return;
+    }
+
+    if (UCharacterMovementComponent* MoveComp = CachedCharacter->GetCharacterMovement())
+    {
+        bSavedOrientRotationToMovement = MoveComp->bOrientRotationToMovement;
+        bSavedUseControllerDesiredRotation = MoveComp->bUseControllerDesiredRotation;
+
+        MoveComp->bOrientRotationToMovement = true;
+        MoveComp->bUseControllerDesiredRotation = false;
+        bMovementRotationOverrideActive = true;
+    }
+}
+
+void UEvasionComponent::RestoreMovementRotationOverride()
+{
+    if (!bMovementRotationOverrideActive || !CachedCharacter.IsValid())
+    {
+        return;
+    }
+
+    if (UCharacterMovementComponent* MoveComp = CachedCharacter->GetCharacterMovement())
+    {
+        MoveComp->bOrientRotationToMovement = bSavedOrientRotationToMovement;
+        MoveComp->bUseControllerDesiredRotation = bSavedUseControllerDesiredRotation;
+    }
+
+    bMovementRotationOverrideActive = false;
+}
+
+void UEvasionComponent::ApplyAnimRootMotionOverrideForEvasion()
+{
+    if (!bDisableMontageRootMotionDuringEvasion || bAnimRootMotionOverrideActive || !CachedCharacter.IsValid() || !CachedCharacter->GetMesh())
+    {
+        return;
+    }
+
+    if (UAnimInstance* AnimInstance = CachedCharacter->GetMesh()->GetAnimInstance())
+    {
+        SavedAnimRootMotionMode = static_cast<uint8>(AnimInstance->RootMotionMode);
+        AnimInstance->SetRootMotionMode(ERootMotionMode::NoRootMotionExtraction);
+        bAnimRootMotionOverrideActive = true;
+    }
+}
+
+void UEvasionComponent::RestoreAnimRootMotionOverrideForEvasion()
+{
+    if (!bAnimRootMotionOverrideActive || !CachedCharacter.IsValid() || !CachedCharacter->GetMesh())
+    {
+        return;
+    }
+
+    if (UAnimInstance* AnimInstance = CachedCharacter->GetMesh()->GetAnimInstance())
+    {
+        AnimInstance->SetRootMotionMode(static_cast<ERootMotionMode::Type>(SavedAnimRootMotionMode));
+    }
+
+    bAnimRootMotionOverrideActive = false;
+}
+
 void UEvasionComponent::BeginInvulnerability()
 {
     ++InvulnerabilityRefCount;
@@ -461,6 +595,8 @@ void UEvasionComponent::FinishActiveEvasion()
     }
 
     bIsEvading = false;
+    RestoreAnimRootMotionOverrideForEvasion();
+    RestoreMovementRotationOverride();
     OnEvasionEnded.Broadcast(ActiveEvasionType);
 }
 

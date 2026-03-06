@@ -7,6 +7,7 @@
 class AActor;
 class ACharacter;
 class UAnimMontage;
+class URPGCombatMovesetDataAsset;
 class USceneComponent;
 class UPlayerStatsComponent;
 class UTargetLockComponent;
@@ -14,6 +15,28 @@ class UCombatStateComponent;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnAttackStateChanged, int32, AttackIndex);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnAttackHit, AActor*, HitActor);
+
+UENUM(BlueprintType)
+enum class ERPGAttackInputType : uint8
+{
+    Light UMETA(DisplayName = "Light"),
+    Heavy UMETA(DisplayName = "Heavy"),
+    Special UMETA(DisplayName = "Special"),
+    Charged UMETA(DisplayName = "Charged"),
+    Aerial UMETA(DisplayName = "Aerial")
+};
+
+USTRUCT(BlueprintType)
+struct FRPGComboLink
+{
+    GENERATED_BODY()
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combo")
+    ERPGAttackInputType InputType = ERPGAttackInputType::Light;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combo", meta = (ClampMin = "0"))
+    int32 NextStageIndex = INDEX_NONE;
+};
 
 USTRUCT(BlueprintType)
 struct FRPGAttackStage
@@ -31,6 +54,9 @@ struct FRPGAttackStage
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Attack", meta = (ClampMin = "0.01"))
     float ComboResetDelay = 0.6f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Attack|Combo")
+    TArray<FRPGComboLink> ComboLinks;
 };
 
 UCLASS(ClassGroup=(RPG), BlueprintType, Blueprintable, meta=(BlueprintSpawnableComponent))
@@ -40,6 +66,12 @@ class RPG_GAME_API UAttackSystemComponent : public UActorComponent
 
 public:
     UAttackSystemComponent();
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Attack|Setup")
+    TObjectPtr<URPGCombatMovesetDataAsset> AttackMoveset = nullptr;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Attack|Setup")
+    bool bLoadMovesetOnBeginPlay = true;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Attack|State")
     bool bCanAttack = true;
@@ -62,8 +94,23 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Attack|Combo")
     bool bUseComboWindowLock = false;
 
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Attack|Combo")
+    bool bAllowSequentialComboFallback = true;
+
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Attack|Combo", meta = (ClampMin = "0.01"))
     float ComboInputBufferDuration = 0.25f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Attack|Combo")
+    TMap<ERPGAttackInputType, int32> AttackStartStageByType;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Attack|State")
+    ERPGAttackInputType BufferedInputType = ERPGAttackInputType::Light;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Attack|Tuning", meta=(ClampMin="0.01"))
+    float WeaponDamageMultiplier = 1.0f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Attack|Tuning", meta=(ClampMin="0.01"))
+    float WeaponStaminaCostMultiplier = 1.0f;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Attack|Aim")
     bool bEnableAttackFacingAssist = true;
@@ -98,11 +145,23 @@ public:
     UPROPERTY(BlueprintAssignable, Category = "Attack|Events")
     FOnAttackHit OnAttackHit;
 
+    UFUNCTION(BlueprintCallable, Category = "Attack|Setup")
+    void ApplyAttackMoveset(URPGCombatMovesetDataAsset* InMoveset, bool bResetComboState = true);
+
+    UFUNCTION(BlueprintCallable, Category = "Attack|Tuning")
+    void SetWeaponAttackTuning(float InDamageMultiplier = 1.0f, float InStaminaMultiplier = 1.0f);
+
     UFUNCTION(BlueprintCallable, Category = "Attack")
     void HandleAttackInput();
 
     UFUNCTION(BlueprintCallable, Category = "Attack")
+    void HandleAttackInputByType(ERPGAttackInputType InputType);
+
+    UFUNCTION(BlueprintCallable, Category = "Attack")
     void BufferComboInput();
+
+    UFUNCTION(BlueprintCallable, Category = "Attack")
+    void BufferComboInputByType(ERPGAttackInputType InputType);
 
     UFUNCTION(BlueprintCallable, Category = "Attack")
     void ContinueComboOrStop();
@@ -145,7 +204,10 @@ private:
     FTimerHandle TraceTimerHandle;
     bool bTraceActive = false;
 
+    void ApplyAttackMovesetInternal(const URPGCombatMovesetDataAsset* InMoveset);
     bool CanStartAttack() const;
+    int32 ResolveComboStartStage(ERPGAttackInputType InputType) const;
+    int32 ResolveNextComboStage(int32 FromStageIndex, ERPGAttackInputType InputType) const;
     bool ConsumeStaminaForCurrentStage();
     void ClearBufferedComboInput();
     void StartAttackStage(int32 StageIndex);

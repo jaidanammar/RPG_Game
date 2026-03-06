@@ -5,6 +5,7 @@
 #include "Components/PlayerStatsComponent.h"
 #include "Components/SceneComponent.h"
 #include "Components/TargetLockComponent.h"
+#include "Data/RPGCombatMovesetDataAsset.h"
 #include "GameFramework/Character.h"
 #include "GameFramework/Controller.h"
 #include "Kismet/GameplayStatics.h"
@@ -25,6 +26,11 @@ void UAttackSystemComponent::BeginPlay()
     CachedTargetLock = GetOwner() ? GetOwner()->FindComponentByClass<UTargetLockComponent>() : nullptr;
     CachedCombatState = GetOwner() ? GetOwner()->FindComponentByClass<UCombatStateComponent>() : nullptr;
 
+    if (bLoadMovesetOnBeginPlay && AttackMoveset)
+    {
+        ApplyAttackMovesetInternal(AttackMoveset);
+    }
+
     if (AttackStages.Num() == 0)
     {
         AttackStages.Add(FRPGAttackStage());
@@ -43,12 +49,62 @@ void UAttackSystemComponent::TickComponent(float DeltaTime, ELevelTick TickType,
     UpdateAttackFacing(DeltaTime);
 }
 
+void UAttackSystemComponent::ApplyAttackMoveset(URPGCombatMovesetDataAsset* InMoveset, bool bResetComboState)
+{
+    if (!InMoveset)
+    {
+        return;
+    }
+
+    AttackMoveset = InMoveset;
+    ApplyAttackMovesetInternal(InMoveset);
+
+    if (bResetComboState)
+    {
+        StopCombo();
+    }
+    else
+    {
+        AttackIndex = FMath::Clamp(AttackIndex, 0, FMath::Max(0, AttackStages.Num() - 1));
+    }
+}
+
+void UAttackSystemComponent::SetWeaponAttackTuning(float InDamageMultiplier, float InStaminaMultiplier)
+{
+    WeaponDamageMultiplier = FMath::Max(0.01f, InDamageMultiplier);
+    WeaponStaminaCostMultiplier = FMath::Max(0.01f, InStaminaMultiplier);
+}
+
+void UAttackSystemComponent::ApplyAttackMovesetInternal(const URPGCombatMovesetDataAsset* InMoveset)
+{
+    if (!InMoveset)
+    {
+        return;
+    }
+
+    AttackStages = InMoveset->AttackStages;
+    AttackStartStageByType = InMoveset->AttackStartStageByType;
+    bUseComboWindowLock = InMoveset->bUseComboWindowLock;
+    bAllowSequentialComboFallback = InMoveset->bAllowSequentialComboFallback;
+    ComboInputBufferDuration = FMath::Max(InMoveset->ComboInputBufferDuration, 0.01f);
+
+    if (AttackStages.Num() == 0)
+    {
+        AttackStages.Add(FRPGAttackStage());
+    }
+}
+
 void UAttackSystemComponent::HandleAttackInput()
+{
+    HandleAttackInputByType(ERPGAttackInputType::Light);
+}
+
+void UAttackSystemComponent::HandleAttackInputByType(ERPGAttackInputType InputType)
 {
     // During an active swing, input should buffer the next combo stage.
     if (bIsAttacking)
     {
-        BufferComboInput();
+        BufferComboInputByType(InputType);
         return;
     }
 
@@ -57,10 +113,21 @@ void UAttackSystemComponent::HandleAttackInput()
         return;
     }
 
-    StartAttackStage(AttackIndex);
+    const int32 StartStage = ResolveComboStartStage(InputType);
+    if (!AttackStages.IsValidIndex(StartStage))
+    {
+        return;
+    }
+
+    StartAttackStage(StartStage);
 }
 
 void UAttackSystemComponent::BufferComboInput()
+{
+    BufferComboInputByType(ERPGAttackInputType::Light);
+}
+
+void UAttackSystemComponent::BufferComboInputByType(ERPGAttackInputType InputType)
 {
     if (!bIsAttacking)
     {
@@ -72,6 +139,7 @@ void UAttackSystemComponent::BufferComboInput()
         return;
     }
 
+    BufferedInputType = InputType;
     bSaveAttack = true;
 
     if (GetWorld())
@@ -84,9 +152,16 @@ void UAttackSystemComponent::BufferComboInput()
 
 void UAttackSystemComponent::ContinueComboOrStop()
 {
-    if (bSaveAttack && AttackStages.IsValidIndex(AttackIndex + 1))
+    if (!bSaveAttack)
     {
-        ++AttackIndex;
+        StopCombo();
+        return;
+    }
+
+    const int32 NextStage = ResolveNextComboStage(AttackIndex, BufferedInputType);
+    if (AttackStages.IsValidIndex(NextStage))
+    {
+        AttackIndex = NextStage;
         bSaveAttack = false;
 
         if (GetWorld())
@@ -109,6 +184,7 @@ void UAttackSystemComponent::StopCombo()
     bCanAttack = true;
     bSaveAttack = false;
     bComboWindowOpen = false;
+    BufferedInputType = ERPGAttackInputType::Light;
     AttackIndex = 0;
 
     if (GetWorld())
@@ -213,6 +289,48 @@ bool UAttackSystemComponent::CanStartAttack() const
     return true;
 }
 
+int32 UAttackSystemComponent::ResolveComboStartStage(ERPGAttackInputType InputType) const
+{
+    if (const int32* FoundStage = AttackStartStageByType.Find(InputType))
+    {
+        if (AttackStages.IsValidIndex(*FoundStage))
+        {
+            return *FoundStage;
+        }
+    }
+
+    if (AttackStages.IsValidIndex(AttackIndex))
+    {
+        return AttackIndex;
+    }
+
+    return AttackStages.IsValidIndex(0) ? 0 : INDEX_NONE;
+}
+
+int32 UAttackSystemComponent::ResolveNextComboStage(int32 FromStageIndex, ERPGAttackInputType InputType) const
+{
+    if (!AttackStages.IsValidIndex(FromStageIndex))
+    {
+        return INDEX_NONE;
+    }
+
+    const FRPGAttackStage& Stage = AttackStages[FromStageIndex];
+    for (const FRPGComboLink& Link : Stage.ComboLinks)
+    {
+        if (Link.InputType == InputType && AttackStages.IsValidIndex(Link.NextStageIndex))
+        {
+            return Link.NextStageIndex;
+        }
+    }
+
+    if (bAllowSequentialComboFallback && AttackStages.IsValidIndex(FromStageIndex + 1))
+    {
+        return FromStageIndex + 1;
+    }
+
+    return INDEX_NONE;
+}
+
 bool UAttackSystemComponent::ConsumeStaminaForCurrentStage()
 {
     if (!CachedStats.IsValid() || !AttackStages.IsValidIndex(AttackIndex))
@@ -220,7 +338,7 @@ bool UAttackSystemComponent::ConsumeStaminaForCurrentStage()
         return true;
     }
 
-    const float Cost = AttackStages[AttackIndex].StaminaCost;
+    const float Cost = AttackStages[AttackIndex].StaminaCost * WeaponStaminaCostMultiplier;
     if (Cost <= 0.0f)
     {
         return true;
@@ -233,6 +351,7 @@ bool UAttackSystemComponent::ConsumeStaminaForCurrentStage()
 void UAttackSystemComponent::ClearBufferedComboInput()
 {
     bSaveAttack = false;
+    BufferedInputType = ERPGAttackInputType::Light;
 }
 
 void UAttackSystemComponent::StartAttackStage(int32 StageIndex)
@@ -391,7 +510,8 @@ void UAttackSystemComponent::TickTrace()
 
         HitActorsThisSwing.Add(HitActorPtr);
 
-        const float Damage = AttackStages.IsValidIndex(AttackIndex) ? AttackStages[AttackIndex].Damage : 10.0f;
+        const float BaseDamage = AttackStages.IsValidIndex(AttackIndex) ? AttackStages[AttackIndex].Damage : 10.0f;
+        const float Damage = BaseDamage * WeaponDamageMultiplier;
         UGameplayStatics::ApplyDamage(
             HitActor,
             Damage,
