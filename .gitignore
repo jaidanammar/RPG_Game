@@ -1,0 +1,23 @@
+# Unreal Engine generated folders
+Binaries/
+DerivedDataCache/
+Intermediate/
+Saved/
+
+# Visual Studio / Rider / VSCode
+.vs/
+.vscode/
+.idea/
+*.VC.db
+*.VC.opendb
+*.sln.ide
+
+# Live coding / patch artifacts
+*.patch_*.exe
+*.patch_*.exp
+*.patch_*.lib
+*.patch_*.pdb
+
+# OS files
+.DS_Store
+Thumbs.db
