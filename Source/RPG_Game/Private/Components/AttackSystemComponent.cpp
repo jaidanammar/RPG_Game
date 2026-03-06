@@ -1,6 +1,7 @@
 #include "Components/AttackSystemComponent.h"
 
 #include "Animation/AnimInstance.h"
+#include "Components/CombatStateComponent.h"
 #include "Components/PlayerStatsComponent.h"
 #include "Components/SceneComponent.h"
 #include "Components/TargetLockComponent.h"
@@ -22,6 +23,7 @@ void UAttackSystemComponent::BeginPlay()
     CachedCharacter = Cast<ACharacter>(GetOwner());
     CachedStats = GetOwner() ? GetOwner()->FindComponentByClass<UPlayerStatsComponent>() : nullptr;
     CachedTargetLock = GetOwner() ? GetOwner()->FindComponentByClass<UTargetLockComponent>() : nullptr;
+    CachedCombatState = GetOwner() ? GetOwner()->FindComponentByClass<UCombatStateComponent>() : nullptr;
 
     if (AttackStages.Num() == 0)
     {
@@ -50,7 +52,7 @@ void UAttackSystemComponent::HandleAttackInput()
         return;
     }
 
-    if (!bCanAttack)
+    if (!CanStartAttack())
     {
         return;
     }
@@ -115,6 +117,11 @@ void UAttackSystemComponent::StopCombo()
         GetWorld()->GetTimerManager().ClearTimer(ComboBufferTimerHandle);
     }
 
+    if (CachedCombatState.IsValid() && !CachedCombatState->IsInState(ERPGCombatState::Dead))
+    {
+        CachedCombatState->RequestState(ERPGCombatState::Idle);
+    }
+
     OnAttackEnded.Broadcast(AttackIndex);
 }
 
@@ -156,6 +163,12 @@ void UAttackSystemComponent::StartTrace(USceneComponent* InTraceStart, USceneCom
     }
 
     bTraceActive = true;
+
+    if (CachedCombatState.IsValid())
+    {
+        CachedCombatState->RequestState(ERPGCombatState::AttackActive);
+    }
+
     GetWorld()->GetTimerManager().ClearTimer(TraceTimerHandle);
 
     // Fire one trace immediately so short notify windows do not miss the first contact frame.
@@ -173,6 +186,11 @@ void UAttackSystemComponent::StopTrace()
     }
 
     bTraceActive = false;
+
+    if (bIsAttacking && CachedCombatState.IsValid() && !CachedCombatState->IsInState(ERPGCombatState::Dead))
+    {
+        CachedCombatState->RequestState(ERPGCombatState::AttackRecovery);
+    }
 }
 
 void UAttackSystemComponent::ResetHitActors()
@@ -182,7 +200,17 @@ void UAttackSystemComponent::ResetHitActors()
 
 bool UAttackSystemComponent::CanStartAttack() const
 {
-    return bCanAttack && AttackStages.IsValidIndex(AttackIndex);
+    if (!bCanAttack || !AttackStages.IsValidIndex(AttackIndex))
+    {
+        return false;
+    }
+
+    if (CachedCombatState.IsValid())
+    {
+        return CachedCombatState->CanTransitionTo(ERPGCombatState::AttackStartup);
+    }
+
+    return true;
 }
 
 bool UAttackSystemComponent::ConsumeStaminaForCurrentStage()
@@ -215,7 +243,12 @@ void UAttackSystemComponent::StartAttackStage(int32 StageIndex)
     }
 
     // First stage requires bCanAttack; chained stages are enabled in ContinueComboOrStop.
-    if (!bCanAttack)
+    if (!CanStartAttack())
+    {
+        return;
+    }
+
+    if (CachedCombatState.IsValid() && !CachedCombatState->RequestState(ERPGCombatState::AttackStartup))
     {
         return;
     }
@@ -369,4 +402,3 @@ void UAttackSystemComponent::TickTrace()
         OnAttackHit.Broadcast(HitActor);
     }
 }
-

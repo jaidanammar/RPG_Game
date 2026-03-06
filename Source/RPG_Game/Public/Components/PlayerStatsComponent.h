@@ -8,6 +8,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnStatChanged, float, CurrentValue
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnXPChanged, float, XP, float, MaxXP, int32, Level);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnLevelChanged, int32, NewLevel);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnDeath);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnDamaged, float, Damage, float, NewHealth, float, MaxHealth);
 
 UCLASS(ClassGroup=(RPG), BlueprintType, Blueprintable, meta=(BlueprintSpawnableComponent))
 class RPG_GAME_API UPlayerStatsComponent : public UActorComponent
@@ -28,6 +29,12 @@ public:
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Stats|Stamina")
     float MaxStamina = 100.0f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Stats|Stamina")
+    bool bAllowStaminaRegen = true;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Stats|Combat")
+    bool bIsInvulnerable = false;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Stats|XP")
     float XP = 0.0f;
@@ -55,6 +62,9 @@ public:
 
     UPROPERTY(BlueprintAssignable, Category = "Stats|Events")
     FOnDeath OnDeath;
+
+    UPROPERTY(BlueprintAssignable, Category = "Stats|Events")
+    FOnDamaged OnDamaged;
 
     UFUNCTION(BlueprintCallable, Category = "Stats|Health")
     bool DecreaseHealth(float Damage);

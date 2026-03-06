@@ -10,6 +10,7 @@ class UAnimMontage;
 class USceneComponent;
 class UPlayerStatsComponent;
 class UTargetLockComponent;
+class UCombatStateComponent;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnAttackStateChanged, int32, AttackIndex);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnAttackHit, AActor*, HitActor);
@@ -135,6 +136,7 @@ private:
     TWeakObjectPtr<ACharacter> CachedCharacter;
     TWeakObjectPtr<UPlayerStatsComponent> CachedStats;
     TWeakObjectPtr<UTargetLockComponent> CachedTargetLock;
+    TWeakObjectPtr<UCombatStateComponent> CachedCombatState;
     TWeakObjectPtr<USceneComponent> TraceStartComponent;
     TWeakObjectPtr<USceneComponent> TraceEndComponent;
     TSet<TWeakObjectPtr<AActor>> HitActorsThisSwing;

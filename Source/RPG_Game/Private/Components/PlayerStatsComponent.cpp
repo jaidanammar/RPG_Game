@@ -17,13 +17,14 @@ void UPlayerStatsComponent::BeginPlay()
 
 bool UPlayerStatsComponent::DecreaseHealth(float Damage)
 {
-    if (Damage <= 0.0f || IsDead())
+    if (Damage <= 0.0f || IsDead() || bIsInvulnerable)
     {
         return IsDead();
     }
 
     CurrentHealth = FMath::Clamp(CurrentHealth - Damage, 0.0f, MaxHealth);
     OnHealthChanged.Broadcast(CurrentHealth, MaxHealth);
+    OnDamaged.Broadcast(Damage, CurrentHealth, MaxHealth);
 
     if (IsDead())
     {
@@ -71,7 +72,7 @@ bool UPlayerStatsComponent::DecreaseStamina(float StaminaDepletion)
 
 void UPlayerStatsComponent::IncreaseStamina(float StaminaRegeneration)
 {
-    if (StaminaRegeneration <= 0.0f)
+    if (StaminaRegeneration <= 0.0f || !bAllowStaminaRegen)
     {
         return;
     }
@@ -144,3 +145,6 @@ void UPlayerStatsComponent::ClampStats()
     CurrentStamina = FMath::Clamp(CurrentStamina, 0.0f, MaxStamina);
     XP = FMath::Clamp(XP, 0.0f, MaxXP);
 }
+
+
+
