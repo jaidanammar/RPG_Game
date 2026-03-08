@@ -4,6 +4,8 @@
 #include "Components/ActorComponent.h"
 #include "CombatStateComponent.generated.h"
 
+class AActor;
+class UCharacterMovementComponent;
 class UPlayerStatsComponent;
 
 UENUM(BlueprintType)
@@ -19,6 +21,10 @@ enum class ERPGCombatState : uint8
 };
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnCombatStateChanged, ERPGCombatState, OldState, ERPGCombatState, NewState);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnGuardStateChanged, bool, bIsGuarding);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnParryWindowChanged, bool, bIsActive);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnParrySuccess, AActor*, AttackerActor, bool, bIsPerfectParry);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnParryFailed);
 
 UCLASS(ClassGroup=(RPG), BlueprintType, Blueprintable, meta=(BlueprintSpawnableComponent))
 class RPG_GAME_API UCombatStateComponent : public UActorComponent
@@ -52,6 +58,12 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CombatState|Guard")
     bool bDisableStaminaRegenWhileGuarding = true;
 
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CombatState|Guard")
+    bool bLimitMovementWhileGuarding = true;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CombatState|Guard", meta=(ClampMin="0.0", ClampMax="1.0"))
+    float GuardWalkSpeedMultiplier = 0.55f;
+
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CombatState|Guard", meta=(ClampMin="0.01"))
     float GuardDrainTickInterval = 0.05f;
 
@@ -64,6 +76,33 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CombatState|Guard", meta=(ClampMin="0.01"))
     float GuardBreakHitstunDuration = 0.35f;
 
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CombatState|Parry")
+    bool bAllowParry = true;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CombatState|Parry", meta=(ClampMin="0.01"))
+    float ParryWindowDuration = 0.15f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CombatState|Parry", meta=(ClampMin="0.0"))
+    float PerfectParryWindowDuration = 0.06f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CombatState|Parry", meta=(ClampMin="0.0"))
+    float ParryCooldown = 0.3f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CombatState|Parry", meta=(ClampMin="0.0"))
+    float ParryStaminaCost = 8.0f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CombatState|Parry", meta=(ClampMin="0.0"))
+    float ParryFailStaminaCost = 4.0f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CombatState|Parry")
+    bool bEnterGuardStateOnParrySuccess = true;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CombatState|Parry")
+    bool bParryWindowActive = false;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CombatState|Parry")
+    bool bParryOnCooldown = false;
+
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CombatState|Hitstun")
     bool bEnterHitstunOnDamage = true;
 
@@ -75,6 +114,18 @@ public:
 
     UPROPERTY(BlueprintAssignable, Category = "CombatState|Events")
     FOnCombatStateChanged OnCombatStateChanged;
+
+    UPROPERTY(BlueprintAssignable, Category = "CombatState|Events")
+    FOnGuardStateChanged OnGuardStateChanged;
+
+    UPROPERTY(BlueprintAssignable, Category = "CombatState|Events")
+    FOnParryWindowChanged OnParryWindowChanged;
+
+    UPROPERTY(BlueprintAssignable, Category = "CombatState|Events")
+    FOnParrySuccess OnParrySuccess;
+
+    UPROPERTY(BlueprintAssignable, Category = "CombatState|Events")
+    FOnParryFailed OnParryFailed;
 
     UFUNCTION(BlueprintPure, Category = "CombatState")
     ERPGCombatState GetCombatState() const { return CurrentState; }
@@ -94,17 +145,43 @@ public:
     UFUNCTION(BlueprintCallable, Category = "CombatState|Guard")
     bool StopGuard();
 
+    UFUNCTION(BlueprintCallable, Category = "CombatState|Guard")
+    void HandleGuardPressed();
+
+    UFUNCTION(BlueprintCallable, Category = "CombatState|Guard")
+    void HandleGuardReleased();
+
+    UFUNCTION(BlueprintCallable, Category = "CombatState|Parry")
+    bool BeginParryAttempt();
+
+    UFUNCTION(BlueprintPure, Category = "CombatState|Parry")
+    bool IsParryWindowCurrentlyActive() const { return bParryWindowActive; }
+
+    UFUNCTION(BlueprintPure, Category = "CombatState|Parry")
+    bool IsParryOnCooldown() const { return bParryOnCooldown; }
+
+    UFUNCTION(BlueprintCallable, Category = "CombatState|Parry")
+    bool TryNegateIncomingDamage(AActor* DamageCauser, bool& bOutPerfectParry);
+
     UFUNCTION(BlueprintCallable, Category = "CombatState|Hitstun")
     bool ApplyHitstun(float Duration = -1.0f);
 
 protected:
     virtual void BeginPlay() override;
+    virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
     virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 
 private:
     TWeakObjectPtr<UPlayerStatsComponent> CachedStats;
+    TWeakObjectPtr<UCharacterMovementComponent> CachedMoveComp;
     FTimerHandle HitstunTimerHandle;
+    FTimerHandle ParryWindowTimerHandle;
+    FTimerHandle ParryCooldownTimerHandle;
     float GuardDrainAccumulator = 0.0f;
+    float SavedGuardWalkSpeed = 0.0f;
+    bool bGuardWalkSpeedOverrideActive = false;
+    bool bGuardInputHeld = false;
+    double PerfectParryWindowEndTime = 0.0;
 
     UFUNCTION()
     void HandleOwnerDeath();
@@ -115,4 +192,8 @@ private:
     void EndHitstun();
     void TickGuardStamina(float DeltaTime);
     bool HasGuardStamina() const;
+    void ApplyGuardMovementPolicy();
+    void RestoreGuardMovementPolicy();
+    void EndParryWindow(bool bBroadcastFail);
+    void EndParryCooldown();
 };

@@ -1,5 +1,7 @@
 #include "Components/PlayerStatsComponent.h"
 
+#include "Components/CombatStateComponent.h"
+#include "GameFramework/Actor.h"
 #include "Math/UnrealMathUtility.h"
 
 UPlayerStatsComponent::UPlayerStatsComponent()
@@ -10,6 +12,11 @@ UPlayerStatsComponent::UPlayerStatsComponent()
 void UPlayerStatsComponent::BeginPlay()
 {
     Super::BeginPlay();
+
+    if (bConsumeOwnerAnyDamageEvents && GetOwner())
+    {
+        GetOwner()->OnTakeAnyDamage.AddDynamic(this, &UPlayerStatsComponent::HandleOwnerAnyDamage);
+    }
 
     ClampStats();
     BroadcastAllStats();
@@ -33,6 +40,26 @@ bool UPlayerStatsComponent::DecreaseHealth(float Damage)
     }
 
     return false;
+}
+
+bool UPlayerStatsComponent::ApplyIncomingDamage(float Damage, AActor* DamageCauser)
+{
+    if (Damage <= 0.0f || IsDead())
+    {
+        return IsDead();
+    }
+
+    if (UCombatStateComponent* CombatState = GetOwner() ? GetOwner()->FindComponentByClass<UCombatStateComponent>() : nullptr)
+    {
+        bool bPerfectParry = false;
+        if (CombatState->TryNegateIncomingDamage(DamageCauser, bPerfectParry))
+        {
+            OnDamageNegated.Broadcast(DamageCauser);
+            return false;
+        }
+    }
+
+    return DecreaseHealth(Damage);
 }
 
 void UPlayerStatsComponent::IncreaseHealth(float HealthRegeneration)
@@ -146,5 +173,12 @@ void UPlayerStatsComponent::ClampStats()
     XP = FMath::Clamp(XP, 0.0f, MaxXP);
 }
 
+void UPlayerStatsComponent::HandleOwnerAnyDamage(AActor* DamagedActor, float Damage, const UDamageType* DamageType, AController* InstigatedBy, AActor* DamageCauser)
+{
+    if (!DamagedActor || DamagedActor != GetOwner())
+    {
+        return;
+    }
 
-
+    ApplyIncomingDamage(Damage, DamageCauser);
+}

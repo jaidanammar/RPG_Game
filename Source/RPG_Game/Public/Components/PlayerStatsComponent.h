@@ -4,11 +4,17 @@
 #include "Components/ActorComponent.h"
 #include "PlayerStatsComponent.generated.h"
 
+class AActor;
+class AController;
+class UCombatStateComponent;
+class UDamageType;
+
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnStatChanged, float, CurrentValue, float, MaxValue);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnXPChanged, float, XP, float, MaxXP, int32, Level);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnLevelChanged, int32, NewLevel);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnDeath);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnDamaged, float, Damage, float, NewHealth, float, MaxHealth);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnDamageNegated, AActor*, DamageCauser);
 
 UCLASS(ClassGroup=(RPG), BlueprintType, Blueprintable, meta=(BlueprintSpawnableComponent))
 class RPG_GAME_API UPlayerStatsComponent : public UActorComponent
@@ -35,6 +41,9 @@ public:
 
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Stats|Combat")
     bool bIsInvulnerable = false;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Stats|Combat")
+    bool bConsumeOwnerAnyDamageEvents = false;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Stats|XP")
     float XP = 0.0f;
@@ -66,8 +75,14 @@ public:
     UPROPERTY(BlueprintAssignable, Category = "Stats|Events")
     FOnDamaged OnDamaged;
 
+    UPROPERTY(BlueprintAssignable, Category = "Stats|Events")
+    FOnDamageNegated OnDamageNegated;
+
     UFUNCTION(BlueprintCallable, Category = "Stats|Health")
     bool DecreaseHealth(float Damage);
+
+    UFUNCTION(BlueprintCallable, Category = "Stats|Health")
+    bool ApplyIncomingDamage(float Damage, AActor* DamageCauser);
 
     UFUNCTION(BlueprintCallable, Category = "Stats|Health")
     void IncreaseHealth(float HealthRegeneration);
@@ -101,4 +116,7 @@ protected:
 
 private:
     void ClampStats();
+
+    UFUNCTION()
+    void HandleOwnerAnyDamage(AActor* DamagedActor, float Damage, const UDamageType* DamageType, AController* InstigatedBy, AActor* DamageCauser);
 };

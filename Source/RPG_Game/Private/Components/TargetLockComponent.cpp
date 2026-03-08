@@ -1,10 +1,13 @@
 #include "Components/TargetLockComponent.h"
 
+#include "Components/CombatStateComponent.h"
+#include "Components/EvasionComponent.h"
 #include "Components/PlayerStatsComponent.h"
 #include "Engine/OverlapResult.h"
 #include "Engine/World.h"
 #include "GameFramework/Actor.h"
 #include "GameFramework/Character.h"
+#include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/Controller.h"
 #include "Kismet/GameplayStatics.h"
 #include "WorldCollision.h"
@@ -17,11 +20,17 @@ UTargetLockComponent::UTargetLockComponent()
 void UTargetLockComponent::BeginPlay()
 {
     Super::BeginPlay();
+
+    CachedCombatState = GetOwner() ? GetOwner()->FindComponentByClass<UCombatStateComponent>() : nullptr;
+    CachedEvasion = GetOwner() ? GetOwner()->FindComponentByClass<UEvasionComponent>() : nullptr;
+    RefreshMovementFacingOverride();
 }
 
 void UTargetLockComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
 {
     Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
+
+    RefreshMovementFacingOverride();
 
     if (!CurrentTarget.IsValid())
     {
@@ -36,6 +45,12 @@ void UTargetLockComponent::TickComponent(float DeltaTime, ELevelTick TickType, F
             ClearLock();
         }
 
+        return;
+    }
+
+    const bool bShouldSuppressSteering = bSuppressLockSteeringWhileEvading && CachedEvasion.IsValid() && CachedEvasion->bIsEvading;
+    if (bShouldSuppressSteering)
+    {
         return;
     }
 
@@ -74,6 +89,7 @@ void UTargetLockComponent::ClearLock()
     }
 
     CurrentTarget = nullptr;
+    RefreshMovementFacingOverride();
     OnLockTargetChanged.Broadcast(nullptr);
 }
 
@@ -152,6 +168,7 @@ bool UTargetLockComponent::SetLockTarget(AActor* NewTarget)
     }
 
     CurrentTarget = NewTarget;
+    RefreshMovementFacingOverride();
     OnLockTargetChanged.Broadcast(NewTarget);
     return true;
 }
@@ -169,6 +186,55 @@ AActor* UTargetLockComponent::GetLockTarget() const
 FVector UTargetLockComponent::GetLockTargetLocation() const
 {
     return CurrentTarget.IsValid() ? CurrentTarget->GetActorLocation() : FVector::ZeroVector;
+}
+
+bool UTargetLockComponent::ShouldUseStrafeLocomotion() const
+{
+    const bool bIsGuarding = CachedCombatState.IsValid() && CachedCombatState->IsInState(ERPGCombatState::Guard);
+    return CurrentTarget.IsValid() || bIsGuarding;
+}
+
+float UTargetLockComponent::GetSignedForwardSpeed() const
+{
+    const AActor* OwnerActor = GetOwner();
+    if (!OwnerActor)
+    {
+        return 0.0f;
+    }
+
+    FVector HorizontalVelocity = OwnerActor->GetVelocity();
+    HorizontalVelocity.Z = 0.0f;
+
+    const FVector Forward = OwnerActor->GetActorForwardVector().GetSafeNormal2D();
+    return FVector::DotProduct(HorizontalVelocity, Forward);
+}
+
+float UTargetLockComponent::GetSignedRightSpeed() const
+{
+    const AActor* OwnerActor = GetOwner();
+    if (!OwnerActor)
+    {
+        return 0.0f;
+    }
+
+    FVector HorizontalVelocity = OwnerActor->GetVelocity();
+    HorizontalVelocity.Z = 0.0f;
+
+    const FVector Right = OwnerActor->GetActorRightVector().GetSafeNormal2D();
+    return FVector::DotProduct(HorizontalVelocity, Right);
+}
+
+float UTargetLockComponent::GetMovementDirectionDegrees() const
+{
+    const float ForwardSpeed = GetSignedForwardSpeed();
+    const float RightSpeed = GetSignedRightSpeed();
+
+    if (FMath::IsNearlyZero(ForwardSpeed, 1.0f) && FMath::IsNearlyZero(RightSpeed, 1.0f))
+    {
+        return 0.0f;
+    }
+
+    return FMath::RadiansToDegrees(FMath::Atan2(RightSpeed, ForwardSpeed));
 }
 
 void UTargetLockComponent::GatherCandidateTargets(TArray<AActor*>& OutTargets) const
@@ -404,6 +470,57 @@ bool UTargetLockComponent::IsTargetDead(AActor* Candidate) const
     return false;
 }
 
+void UTargetLockComponent::RefreshMovementFacingOverride()
+{
+    ACharacter* CharacterOwner = Cast<ACharacter>(GetOwner());
+    if (!CharacterOwner)
+    {
+        return;
+    }
+
+    UCharacterMovementComponent* MoveComp = CharacterOwner->GetCharacterMovement();
+    if (!MoveComp)
+    {
+        return;
+    }
+
+    const bool bIsEvading = CachedEvasion.IsValid() && CachedEvasion->bIsEvading;
+    if (bIsEvading)
+    {
+        return;
+    }
+
+    const bool bIsGuarding = CachedCombatState.IsValid() && CachedCombatState->IsInState(ERPGCombatState::Guard);
+    const bool bShouldUseStrafeMode = CurrentTarget.IsValid() || bIsGuarding;
+
+    if (bShouldUseStrafeMode && !bMovementStrafeOverrideApplied)
+    {
+        bSavedOrientRotationToMovement = MoveComp->bOrientRotationToMovement;
+        bSavedUseControllerDesiredRotation = MoveComp->bUseControllerDesiredRotation;
+        bSavedUseControllerRotationYaw = CharacterOwner->bUseControllerRotationYaw;
+        bMovementStrafeOverrideApplied = true;
+    }
+
+    if (bShouldUseStrafeMode)
+    {
+        // Keep facing locked to camera/target so backward input backpedals instead of turning around.
+        MoveComp->bOrientRotationToMovement = false;
+        MoveComp->bUseControllerDesiredRotation = true;
+        CharacterOwner->bUseControllerRotationYaw = true;
+        return;
+    }
+
+    if (!bMovementStrafeOverrideApplied)
+    {
+        return;
+    }
+
+    MoveComp->bOrientRotationToMovement = bSavedOrientRotationToMovement;
+    MoveComp->bUseControllerDesiredRotation = bSavedUseControllerDesiredRotation;
+    CharacterOwner->bUseControllerRotationYaw = bSavedUseControllerRotationYaw;
+    bMovementStrafeOverrideApplied = false;
+}
+
 void UTargetLockComponent::RotateOwnerTowardTarget(float DeltaTime)
 {
     if (!GetOwner() || !CurrentTarget.IsValid())
@@ -465,4 +582,5 @@ void UTargetLockComponent::UpdateControllerFacing(float DeltaTime)
 
     Controller->SetControlRotation(NewControlRotation);
 }
+
 

@@ -5,6 +5,8 @@
 #include "TargetLockComponent.generated.h"
 
 class AActor;
+class UCombatStateComponent;
+class UEvasionComponent;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnLockTargetChanged, AActor*, NewTarget);
 
@@ -21,6 +23,9 @@ public:
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "LockOn")
     bool bDriveControllerRotationWhenLocked = true;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "LockOn")
+    bool bSuppressLockSteeringWhileEvading = true;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "LockOn", meta = (ClampMin = "0.1"))
     float RotationInterpSpeed = 12.0f;
@@ -82,18 +87,39 @@ public:
     UFUNCTION(BlueprintPure, Category = "LockOn")
     FVector GetLockTargetLocation() const;
 
+    UFUNCTION(BlueprintPure, Category = "Locomotion")
+    bool ShouldUseStrafeLocomotion() const;
+
+    UFUNCTION(BlueprintPure, Category = "Locomotion")
+    float GetSignedForwardSpeed() const;
+
+    UFUNCTION(BlueprintPure, Category = "Locomotion")
+    float GetSignedRightSpeed() const;
+
+    UFUNCTION(BlueprintPure, Category = "Locomotion")
+    float GetMovementDirectionDegrees() const;
+
 protected:
     virtual void BeginPlay() override;
     virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 
 private:
     TWeakObjectPtr<AActor> CurrentTarget;
+    TWeakObjectPtr<UCombatStateComponent> CachedCombatState;
+    TWeakObjectPtr<UEvasionComponent> CachedEvasion;
+
+    bool bMovementStrafeOverrideApplied = false;
+    bool bSavedOrientRotationToMovement = false;
+    bool bSavedUseControllerDesiredRotation = false;
+    bool bSavedUseControllerRotationYaw = false;
 
     void GatherCandidateTargets(TArray<AActor*>& OutTargets) const;
     AActor* FindBestTarget() const;
     bool IsValidLockTarget(AActor* Candidate) const;
     bool HasLineOfSightTo(AActor* Candidate) const;
     bool IsTargetDead(AActor* Candidate) const;
+    void RefreshMovementFacingOverride();
     void RotateOwnerTowardTarget(float DeltaTime);
     void UpdateControllerFacing(float DeltaTime);
 };
+
