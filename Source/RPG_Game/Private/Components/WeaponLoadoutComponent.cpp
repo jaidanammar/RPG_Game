@@ -2,7 +2,9 @@
 
 #include "Components/AttackSystemComponent.h"
 #include "Components/EvasionComponent.h"
+#include "Data/RPGLocomotionDataAsset.h"
 #include "Data/RPGWeaponDataAssets.h"
+#include "Components/LocomotionComponent.h"
 #include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
 
@@ -58,6 +60,36 @@ FRPGEvasionDirectionalMontages MergeDirectionalMontages(
 
     return Result;
 }
+void MergeMissingAnimationSlots(FRPGWeaponAnimationSet& InOutTarget, const FRPGWeaponAnimationSet& Fallback)
+{
+    for (uint8 SlotIndex = 0; SlotIndex < static_cast<uint8>(ERPGAnimationSlot::Count); ++SlotIndex)
+    {
+        const ERPGAnimationSlot Slot = static_cast<ERPGAnimationSlot>(SlotIndex);
+        if (!InOutTarget.GetAnimationForSlot(Slot))
+        {
+            InOutTarget.SetAnimationForSlot(Slot, Fallback.GetAnimationForSlot(Slot));
+        }
+    }
+}
+
+void NormalizeAnimationSet(FRPGWeaponAnimationSet& InOutAnimationSet)
+{
+    if (!InOutAnimationSet.FallLoop)
+    {
+        InOutAnimationSet.FallLoop = InOutAnimationSet.JumpLoop;
+    }
+
+    if (!InOutAnimationSet.JumpLoop)
+    {
+        InOutAnimationSet.JumpLoop = InOutAnimationSet.FallLoop;
+    }
+}
+
+URPGWeaponTypeDataAsset* LoadDefaultUnarmedWeaponTypeProfile()
+{
+    static const TCHAR* UnarmedProfilePath = TEXT("/Game/Core/Combat/Weapons/Unarmed/Data/DA_WeaponType_Unarmed.DA_WeaponType_Unarmed");
+    return LoadObject<URPGWeaponTypeDataAsset>(nullptr, UnarmedProfilePath);
+}
 } // namespace
 
 UWeaponLoadoutComponent::UWeaponLoadoutComponent()
@@ -72,6 +104,7 @@ void UWeaponLoadoutComponent::BeginPlay()
     CacheCombatComponents();
     CacheDefaultsFromCombatComponents();
     ActiveAnimationSet = DefaultAnimationSet;
+    NormalizeAnimationSet(ActiveAnimationSet);
     ActiveWeaponType = ERPGWeaponType::Unarmed;
 
     if (EquippedWeaponInstance)
@@ -153,9 +186,10 @@ bool UWeaponLoadoutComponent::UnequipWeapon(bool bResetCombo)
     EquippedWeaponInstance = nullptr;
     ActiveWeaponType = ERPGWeaponType::Unarmed;
 
-    if (CachedAttackSystem.IsValid() && DefaultAttackMoveset)
+    URPGCombatMovesetDataAsset* UnarmedMovesetToApply = UnarmedAttackMoveset ? UnarmedAttackMoveset : DefaultAttackMoveset;
+    if (CachedAttackSystem.IsValid() && UnarmedMovesetToApply)
     {
-        CachedAttackSystem->ApplyAttackMoveset(DefaultAttackMoveset, bResetCombo);
+        CachedAttackSystem->ApplyAttackMoveset(UnarmedMovesetToApply, bResetCombo);
     }
 
     if (CachedAttackSystem.IsValid())
@@ -176,7 +210,18 @@ bool UWeaponLoadoutComponent::UnequipWeapon(bool bResetCombo)
     }
 
     ActiveAnimationSet = DefaultAnimationSet;
-    ApplyWalkSpeedMultiplier(1.0f);
+    NormalizeAnimationSet(ActiveAnimationSet);
+
+    if (CachedLocomotion.IsValid())
+    {
+        CachedLocomotion->ResetToDefaultLocomotionData();
+        CachedLocomotion->ClearSpeedMultiplier(TEXT("Weapon"));
+    }
+    else
+    {
+        ApplyWalkSpeedMultiplier(1.0f);
+    }
+
     BroadcastWeaponAnimationChanges();
 
     return true;
@@ -213,10 +258,12 @@ bool UWeaponLoadoutComponent::ApplyWeaponTypeProfile(URPGWeaponTypeDataAsset* Ne
 void UWeaponLoadoutComponent::SetDefaultAnimationSet(const FRPGWeaponAnimationSet& InDefaultAnimationSet)
 {
     DefaultAnimationSet = InDefaultAnimationSet;
+    NormalizeAnimationSet(DefaultAnimationSet);
 
     if (!EquippedWeaponInstance || !EquippedWeaponInstance->WeaponTypeProfile)
     {
         ActiveAnimationSet = DefaultAnimationSet;
+    NormalizeAnimationSet(ActiveAnimationSet);
         BroadcastWeaponAnimationChanges();
         return;
     }
@@ -244,6 +291,7 @@ void UWeaponLoadoutComponent::CacheCombatComponents()
 
     CachedAttackSystem = GetOwner()->FindComponentByClass<UAttackSystemComponent>();
     CachedEvasion = GetOwner()->FindComponentByClass<UEvasionComponent>();
+    CachedLocomotion = GetOwner()->FindComponentByClass<ULocomotionComponent>();
 
     if (ACharacter* OwnerCharacter = Cast<ACharacter>(GetOwner()))
     {
@@ -273,6 +321,18 @@ void UWeaponLoadoutComponent::CacheDefaultsFromCombatComponents()
     {
         BaseWalkSpeed = FMath::Max(0.0f, CachedMoveComp->MaxWalkSpeed);
     }
+
+    if (URPGWeaponTypeDataAsset* DefaultUnarmedProfile = LoadDefaultUnarmedWeaponTypeProfile())
+    {
+        MergeMissingAnimationSlots(DefaultAnimationSet, DefaultUnarmedProfile->AnimationOverrides);
+
+        if (DefaultUnarmedProfile->AttackMoveset)
+        {
+            UnarmedAttackMoveset = DefaultUnarmedProfile->AttackMoveset;
+        }
+    }
+
+    NormalizeAnimationSet(DefaultAnimationSet);
 }
 
 void UWeaponLoadoutComponent::ApplyTypeProfileInternal(const URPGWeaponTypeDataAsset* WeaponTypeProfile, bool bResetCombo)
@@ -300,37 +360,72 @@ void UWeaponLoadoutComponent::ApplyTypeProfileInternal(const URPGWeaponTypeDataA
 
     if (CachedEvasion.IsValid())
     {
-        const FRPGEvasionDirectionalMontages DodgeMontages = MergeDirectionalMontages(
-            DefaultDodgeDirectionalMontages,
-            WeaponTypeProfile->DodgeDirectionalMontages);
+        const FRPGEvasionDirectionalMontages DodgeMontages = WeaponTypeProfile->bOverrideDodgeProfile
+            ? MergeDirectionalMontages(DefaultDodgeDirectionalMontages, WeaponTypeProfile->DodgeDirectionalMontages)
+            : DefaultDodgeDirectionalMontages;
 
-        const FRPGEvasionDirectionalMontages RollMontages = MergeDirectionalMontages(
-            DefaultRollDirectionalMontages,
-            WeaponTypeProfile->RollDirectionalMontages);
+        UAnimMontage* DodgeMontageToUse = DefaultDodgeMontage;
+        if (WeaponTypeProfile->bOverrideDodgeProfile && WeaponTypeProfile->DodgeMontage)
+        {
+            DodgeMontageToUse = WeaponTypeProfile->DodgeMontage;
+        }
+
+        const bool bUseDirectionalDodge = WeaponTypeProfile->bOverrideDodgeProfile
+            ? WeaponTypeProfile->bUseDirectionalDodgeMontages
+            : bDefaultUseDirectionalDodgeMontages;
+
+        const FRPGEvasionDirectionalMontages RollMontages = WeaponTypeProfile->bOverrideRollProfile
+            ? MergeDirectionalMontages(DefaultRollDirectionalMontages, WeaponTypeProfile->RollDirectionalMontages)
+            : DefaultRollDirectionalMontages;
+
+        UAnimMontage* RollMontageToUse = DefaultRollMontage;
+        if (WeaponTypeProfile->bOverrideRollProfile && WeaponTypeProfile->RollMontage)
+        {
+            RollMontageToUse = WeaponTypeProfile->RollMontage;
+        }
+
+        const bool bUseDirectionalRoll = WeaponTypeProfile->bOverrideRollProfile
+            ? WeaponTypeProfile->bUseDirectionalRollMontages
+            : bDefaultUseDirectionalRollMontages;
 
         CachedEvasion->SetWeaponEvasionProfile(
             DodgeMontages,
-            WeaponTypeProfile->DodgeMontage ? WeaponTypeProfile->DodgeMontage : DefaultDodgeMontage,
+            DodgeMontageToUse,
             RollMontages,
-            WeaponTypeProfile->RollMontage ? WeaponTypeProfile->RollMontage : DefaultRollMontage,
-            WeaponTypeProfile->bUseDirectionalDodgeMontages,
-            WeaponTypeProfile->bUseDirectionalRollMontages);
+            RollMontageToUse,
+            bUseDirectionalDodge,
+            bUseDirectionalRoll);
     }
 
     RefreshActiveAnimationSet(WeaponTypeProfile);
+
+    if (CachedLocomotion.IsValid())
+    {
+        if (WeaponTypeProfile->bOverrideLocomotionData && WeaponTypeProfile->LocomotionData)
+        {
+            CachedLocomotion->SetLocomotionData(WeaponTypeProfile->LocomotionData);
+        }
+        else
+        {
+            CachedLocomotion->ResetToDefaultLocomotionData();
+        }
+    }
+
+
     BroadcastWeaponAnimationChanges();
 }
 
 void UWeaponLoadoutComponent::RefreshActiveAnimationSet(const URPGWeaponTypeDataAsset* WeaponTypeProfile)
 {
     ActiveAnimationSet = DefaultAnimationSet;
+    NormalizeAnimationSet(ActiveAnimationSet);
 
     if (!WeaponTypeProfile)
     {
         return;
     }
 
-    for (uint8 SlotIndex = 0; SlotIndex <= static_cast<uint8>(ERPGAnimationSlot::FallLoop); ++SlotIndex)
+    for (uint8 SlotIndex = 0; SlotIndex < static_cast<uint8>(ERPGAnimationSlot::Count); ++SlotIndex)
     {
         const ERPGAnimationSlot Slot = static_cast<ERPGAnimationSlot>(SlotIndex);
         if (UAnimationAsset* OverrideAsset = WeaponTypeProfile->AnimationOverrides.GetAnimationForSlot(Slot))
@@ -338,10 +433,20 @@ void UWeaponLoadoutComponent::RefreshActiveAnimationSet(const URPGWeaponTypeData
             ActiveAnimationSet.SetAnimationForSlot(Slot, OverrideAsset);
         }
     }
+
+    NormalizeAnimationSet(ActiveAnimationSet);
 }
 
 void UWeaponLoadoutComponent::ApplyWalkSpeedMultiplier(float InWalkSpeedMultiplier)
 {
+    const float SafeMultiplier = FMath::Max(0.01f, InWalkSpeedMultiplier);
+
+    if (CachedLocomotion.IsValid())
+    {
+        CachedLocomotion->SetSpeedMultiplier(TEXT("Weapon"), SafeMultiplier);
+        return;
+    }
+
     if (!CachedMoveComp.IsValid())
     {
         return;
@@ -352,7 +457,6 @@ void UWeaponLoadoutComponent::ApplyWalkSpeedMultiplier(float InWalkSpeedMultipli
         BaseWalkSpeed = FMath::Max(0.0f, CachedMoveComp->MaxWalkSpeed);
     }
 
-    const float SafeMultiplier = FMath::Max(0.01f, InWalkSpeedMultiplier);
     CachedMoveComp->MaxWalkSpeed = BaseWalkSpeed * SafeMultiplier;
 }
 
@@ -361,3 +465,4 @@ void UWeaponLoadoutComponent::BroadcastWeaponAnimationChanges()
     OnWeaponProfileChanged.Broadcast(ActiveWeaponType);
     OnWeaponAnimationSetChanged.Broadcast(ActiveAnimationSet);
 }
+

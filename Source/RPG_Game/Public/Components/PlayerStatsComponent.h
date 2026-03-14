@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
+#include "Data/RPGCombatTypes.h"
 #include "PlayerStatsComponent.generated.h"
 
 class AActor;
@@ -15,6 +16,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnLevelChanged, int32, NewLevel);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnDeath);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnDamaged, float, Damage, float, NewHealth, float, MaxHealth);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnDamageNegated, AActor*, DamageCauser);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_FourParams(FOnHitReceived, FRPGDamageSpec, DamageSpec, float, DamageApplied, float, NewHealth, float, MaxHealth);
 
 UCLASS(ClassGroup=(RPG), BlueprintType, Blueprintable, meta=(BlueprintSpawnableComponent))
 class RPG_GAME_API UPlayerStatsComponent : public UActorComponent
@@ -38,6 +40,9 @@ public:
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Stats|Stamina")
     bool bAllowStaminaRegen = true;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Stats|Stamina", meta=(ClampMin="0.0"))
+    float StaminaRegenPerSecond = 20.0f;
 
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Stats|Combat")
     bool bIsInvulnerable = false;
@@ -78,11 +83,17 @@ public:
     UPROPERTY(BlueprintAssignable, Category = "Stats|Events")
     FOnDamageNegated OnDamageNegated;
 
+    UPROPERTY(BlueprintAssignable, Category = "Stats|Events")
+    FOnHitReceived OnHitReceived;
+
     UFUNCTION(BlueprintCallable, Category = "Stats|Health")
     bool DecreaseHealth(float Damage);
 
     UFUNCTION(BlueprintCallable, Category = "Stats|Health")
     bool ApplyIncomingDamage(float Damage, AActor* DamageCauser);
+
+    UFUNCTION(BlueprintCallable, Category = "Stats|Health")
+    bool ApplyIncomingHit(const FRPGDamageSpec& DamageSpec);
 
     UFUNCTION(BlueprintCallable, Category = "Stats|Health")
     void IncreaseHealth(float HealthRegeneration);
@@ -113,6 +124,7 @@ public:
 
 protected:
     virtual void BeginPlay() override;
+    virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 
 private:
     void ClampStats();
@@ -120,3 +132,7 @@ private:
     UFUNCTION()
     void HandleOwnerAnyDamage(AActor* DamagedActor, float Damage, const UDamageType* DamageType, AController* InstigatedBy, AActor* DamageCauser);
 };
+
+
+
+

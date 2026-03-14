@@ -393,7 +393,9 @@ bool UTargetLockComponent::IsValidLockTarget(AActor* Candidate) const
         return false;
     }
 
-    if (!TargetableTag.IsNone() && !Candidate->ActorHasTag(TargetableTag))
+    const bool bHasTargetableTag = TargetableTag.IsNone() || Candidate->ActorHasTag(TargetableTag);
+    const bool bHasCombatStats = Candidate->FindComponentByClass<UPlayerStatsComponent>() != nullptr;
+    if (!bHasTargetableTag && !bHasCombatStats)
     {
         return false;
     }
@@ -582,5 +584,6 @@ void UTargetLockComponent::UpdateControllerFacing(float DeltaTime)
 
     Controller->SetControlRotation(NewControlRotation);
 }
+
 
 

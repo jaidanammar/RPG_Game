@@ -7,6 +7,7 @@
 #include "RPGWeaponDataAssets.generated.h"
 
 class UAnimationAsset;
+class URPGLocomotionDataAsset;
 
 UENUM(BlueprintType)
 enum class ERPGWeaponType : uint8
@@ -27,12 +28,26 @@ enum class ERPGAnimationSlot : uint8
     Walk UMETA(DisplayName = "Walk"),
     Run UMETA(DisplayName = "Run"),
     Sprint UMETA(DisplayName = "Sprint"),
-    CrouchIdle UMETA(DisplayName = "Crouch Idle"),
-    CrouchWalk UMETA(DisplayName = "Crouch Walk"),
+    GuardIdle UMETA(DisplayName = "Guard Idle"),
+    GuardMove UMETA(DisplayName = "Guard Move"),
+    RunStart UMETA(DisplayName = "Run Start"),
+    RunStop UMETA(DisplayName = "Run Stop"),
     JumpStart UMETA(DisplayName = "Jump Start"),
     JumpLoop UMETA(DisplayName = "Jump Loop"),
     JumpLand UMETA(DisplayName = "Jump Land"),
-    FallLoop UMETA(DisplayName = "Fall Loop")
+    FallLoop UMETA(DisplayName = "Fall Loop"),
+    GuardEnter UMETA(DisplayName = "Guard Enter"),
+    GuardLoop UMETA(DisplayName = "Guard Loop"),
+    GuardExit UMETA(DisplayName = "Guard Exit"),
+    Parry UMETA(DisplayName = "Parry"),
+    HitLightFront UMETA(DisplayName = "Hit Light Front"),
+    HitLightBack UMETA(DisplayName = "Hit Light Back"),
+    HitHeavyFront UMETA(DisplayName = "Hit Heavy Front"),
+    HitHeavyBack UMETA(DisplayName = "Hit Heavy Back"),
+    GuardBreak UMETA(DisplayName = "Guard Break"),
+    Equip UMETA(DisplayName = "Equip"),
+    Unequip UMETA(DisplayName = "Unequip"),
+    Count UMETA(Hidden)
 };
 
 USTRUCT(BlueprintType)
@@ -53,10 +68,16 @@ struct FRPGWeaponAnimationSet
     TObjectPtr<UAnimationAsset> Sprint = nullptr;
 
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon|Animation")
-    TObjectPtr<UAnimationAsset> CrouchIdle = nullptr;
+    TObjectPtr<UAnimationAsset> GuardIdle = nullptr;
 
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon|Animation")
-    TObjectPtr<UAnimationAsset> CrouchWalk = nullptr;
+    TObjectPtr<UAnimationAsset> GuardMove = nullptr;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon|Animation")
+    TObjectPtr<UAnimationAsset> RunStart = nullptr;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon|Animation")
+    TObjectPtr<UAnimationAsset> RunStop = nullptr;
 
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon|Animation")
     TObjectPtr<UAnimationAsset> JumpStart = nullptr;
@@ -69,6 +90,39 @@ struct FRPGWeaponAnimationSet
 
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon|Animation")
     TObjectPtr<UAnimationAsset> FallLoop = nullptr;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon|Animation")
+    TObjectPtr<UAnimationAsset> GuardEnter = nullptr;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon|Animation")
+    TObjectPtr<UAnimationAsset> GuardLoop = nullptr;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon|Animation")
+    TObjectPtr<UAnimationAsset> GuardExit = nullptr;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon|Animation")
+    TObjectPtr<UAnimationAsset> Parry = nullptr;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon|Animation")
+    TObjectPtr<UAnimationAsset> HitLightFront = nullptr;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon|Animation")
+    TObjectPtr<UAnimationAsset> HitLightBack = nullptr;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon|Animation")
+    TObjectPtr<UAnimationAsset> HitHeavyFront = nullptr;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon|Animation")
+    TObjectPtr<UAnimationAsset> HitHeavyBack = nullptr;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon|Animation")
+    TObjectPtr<UAnimationAsset> GuardBreak = nullptr;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon|Animation")
+    TObjectPtr<UAnimationAsset> Equip = nullptr;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon|Animation")
+    TObjectPtr<UAnimationAsset> Unequip = nullptr;
 
     UAnimationAsset* GetAnimationForSlot(ERPGAnimationSlot Slot) const;
     void SetAnimationForSlot(ERPGAnimationSlot Slot, UAnimationAsset* Animation);
@@ -111,6 +165,9 @@ public:
     bool bUseDirectionalDodgeMontages = true;
 
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon|Evasion")
+    bool bOverrideDodgeProfile = false;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon|Evasion")
     FRPGEvasionDirectionalMontages DodgeDirectionalMontages;
 
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon|Evasion")
@@ -120,6 +177,9 @@ public:
     bool bUseDirectionalRollMontages = true;
 
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon|Evasion")
+    bool bOverrideRollProfile = false;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon|Evasion")
     FRPGEvasionDirectionalMontages RollDirectionalMontages;
 
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon|Evasion")
@@ -127,6 +187,12 @@ public:
 
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon|Animation")
     FRPGWeaponAnimationSet AnimationOverrides;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon|Locomotion")
+    bool bOverrideLocomotionData = false;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon|Locomotion")
+    TObjectPtr<URPGLocomotionDataAsset> LocomotionData = nullptr;
 
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon|Tuning")
     FRPGWeaponCombatTuning BaseTuning;
@@ -162,3 +228,5 @@ public:
     UFUNCTION(BlueprintPure, Category = "Weapon|Tuning")
     FRPGWeaponCombatTuning ResolveFinalTuning() const;
 };
+
+

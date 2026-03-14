@@ -4,6 +4,7 @@
 #include "Components/CombatStateComponent.h"
 #include "Components/PlayerStatsComponent.h"
 #include "Components/TargetLockComponent.h"
+#include "Components/LocomotionComponent.h"
 #include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/Controller.h"
@@ -49,6 +50,7 @@ void UEvasionComponent::BeginPlay()
     CachedCombatState = GetOwner() ? GetOwner()->FindComponentByClass<UCombatStateComponent>() : nullptr;
     CachedSpringArm = GetOwner() ? GetOwner()->FindComponentByClass<USpringArmComponent>() : nullptr;
     CachedTargetLock = GetOwner() ? GetOwner()->FindComponentByClass<UTargetLockComponent>() : nullptr;
+    CachedLocomotion = GetOwner() ? GetOwner()->FindComponentByClass<ULocomotionComponent>() : nullptr;
 }
 
 bool UEvasionComponent::StartDodge()
@@ -153,6 +155,19 @@ bool UEvasionComponent::TryStartEvasion(ERPGEvasionType EvasionType)
     {
         BroadcastFail(EvasionType, TEXT("Blocked by combat state"));
         return false;
+    }
+
+    if (CachedLocomotion.IsValid())
+    {
+        const ERPGMovementCapability RequiredCapability = EvasionType == ERPGEvasionType::Roll
+            ? ERPGMovementCapability::CombatRoll
+            : ERPGMovementCapability::Dodge;
+
+        if (!CachedLocomotion->IsCapabilityAllowed(RequiredCapability))
+        {
+            BroadcastFail(EvasionType, TEXT("Blocked by locomotion capability"));
+            return false;
+        }
     }
 
     const float BaseStaminaCost = EvasionType == ERPGEvasionType::Dodge ? DodgeStaminaCost : RollStaminaCost;
@@ -614,3 +629,6 @@ void UEvasionComponent::BroadcastFail(ERPGEvasionType EvasionType, const FString
 {
     OnEvasionFailed.Broadcast(EvasionType, Reason);
 }
+
+
+

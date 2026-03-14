@@ -2,11 +2,13 @@
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
+#include "Data/RPGCombatTypes.h"
 #include "CombatStateComponent.generated.h"
 
 class AActor;
 class UCharacterMovementComponent;
 class UPlayerStatsComponent;
+class ULocomotionComponent;
 
 UENUM(BlueprintType)
 enum class ERPGCombatState : uint8
@@ -25,6 +27,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnGuardStateChanged, bool, bIsGuard
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnParryWindowChanged, bool, bIsActive);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnParrySuccess, AActor*, AttackerActor, bool, bIsPerfectParry);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnParryFailed);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnHitReactionUpdated, ERPGHitReactionStrength, ReactionStrength, ERPGHitDirection, HitDirection);
 
 UCLASS(ClassGroup=(RPG), BlueprintType, Blueprintable, meta=(BlueprintSpawnableComponent))
 class RPG_GAME_API UCombatStateComponent : public UActorComponent
@@ -95,7 +98,10 @@ public:
     float ParryFailStaminaCost = 4.0f;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CombatState|Parry")
-    bool bEnterGuardStateOnParrySuccess = true;
+    bool bEnterGuardStateOnParrySuccess = false;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CombatState|Parry")
+    bool bBeginParryOnGuardPressed = false;
 
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CombatState|Parry")
     bool bParryWindowActive = false;
@@ -112,6 +118,18 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CombatState|Hitstun")
     bool bGuardPreventsHitstun = true;
 
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CombatState|Guard", meta=(ClampMin="0.0", ClampMax="1.0"))
+    float GuardChipDamageMultiplier = 0.1f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CombatState|Guard", meta=(ClampMin="0.0"))
+    float GuardStaminaDamageMultiplier = 1.25f;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CombatState|HitReaction")
+    ERPGHitReactionStrength LastHitReactionStrength = ERPGHitReactionStrength::None;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CombatState|HitReaction")
+    ERPGHitDirection LastHitDirection = ERPGHitDirection::Front;
+
     UPROPERTY(BlueprintAssignable, Category = "CombatState|Events")
     FOnCombatStateChanged OnCombatStateChanged;
 
@@ -126,6 +144,9 @@ public:
 
     UPROPERTY(BlueprintAssignable, Category = "CombatState|Events")
     FOnParryFailed OnParryFailed;
+
+    UPROPERTY(BlueprintAssignable, Category = "CombatState|Events")
+    FOnHitReactionUpdated OnHitReactionUpdated;
 
     UFUNCTION(BlueprintPure, Category = "CombatState")
     ERPGCombatState GetCombatState() const { return CurrentState; }
@@ -161,7 +182,7 @@ public:
     bool IsParryOnCooldown() const { return bParryOnCooldown; }
 
     UFUNCTION(BlueprintCallable, Category = "CombatState|Parry")
-    bool TryNegateIncomingDamage(AActor* DamageCauser, bool& bOutPerfectParry);
+    bool TryNegateIncomingDamage(const FRPGDamageSpec& DamageSpec, bool& bOutPerfectParry);
 
     UFUNCTION(BlueprintCallable, Category = "CombatState|Hitstun")
     bool ApplyHitstun(float Duration = -1.0f);
@@ -173,6 +194,7 @@ protected:
 
 private:
     TWeakObjectPtr<UPlayerStatsComponent> CachedStats;
+    TWeakObjectPtr<ULocomotionComponent> CachedLocomotion;
     TWeakObjectPtr<UCharacterMovementComponent> CachedMoveComp;
     FTimerHandle HitstunTimerHandle;
     FTimerHandle ParryWindowTimerHandle;
@@ -187,7 +209,7 @@ private:
     void HandleOwnerDeath();
 
     UFUNCTION()
-    void HandleOwnerDamaged(float Damage, float NewHealth, float MaxHealth);
+    void HandleOwnerHitReceived(FRPGDamageSpec DamageSpec, float DamageApplied, float NewHealth, float MaxHealth);
 
     void EndHitstun();
     void TickGuardStamina(float DeltaTime);
@@ -197,3 +219,12 @@ private:
     void EndParryWindow(bool bBroadcastFail);
     void EndParryCooldown();
 };
+
+
+
+
+
+
+
+
+

@@ -10,6 +10,7 @@ class UCombatStateComponent;
 class UPlayerStatsComponent;
 class USpringArmComponent;
 class UTargetLockComponent;
+class ULocomotionComponent;
 
 UENUM(BlueprintType)
 enum class ERPGEvasionType : uint8
@@ -234,6 +235,7 @@ private:
     TWeakObjectPtr<UCombatStateComponent> CachedCombatState;
     TWeakObjectPtr<USpringArmComponent> CachedSpringArm;
     TWeakObjectPtr<UTargetLockComponent> CachedTargetLock;
+    TWeakObjectPtr<ULocomotionComponent> CachedLocomotion;
 
     FTimerHandle EvasionEndTimerHandle;
     FTimerHandle DodgeCooldownTimerHandle;
@@ -276,4 +278,6 @@ private:
 
     void BroadcastFail(ERPGEvasionType EvasionType, const FString& Reason);
 };
+
+
 

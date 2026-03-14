@@ -1,10 +1,13 @@
 #include "Components/AttackSystemComponent.h"
 
 #include "Animation/AnimInstance.h"
+#include "Animation/AnimMontage.h"
+#include "Animation/RPGAnimNotifyState_AttackTraceWindow.h"
 #include "Components/CombatStateComponent.h"
 #include "Components/PlayerStatsComponent.h"
 #include "Components/SceneComponent.h"
 #include "Components/TargetLockComponent.h"
+#include "Components/LocomotionComponent.h"
 #include "Data/RPGCombatMovesetDataAsset.h"
 #include "GameFramework/Character.h"
 #include "GameFramework/Controller.h"
@@ -13,6 +16,36 @@
 #include "Kismet/KismetSystemLibrary.h"
 #include "TimerManager.h"
 
+namespace
+{
+bool ShouldUseFallbackTrace(
+    const TWeakObjectPtr<USceneComponent>& TraceStartComponent,
+    const TWeakObjectPtr<USceneComponent>& TraceEndComponent,
+    const AActor* OwnerActor)
+{
+    if (!TraceStartComponent.IsValid() || !TraceEndComponent.IsValid())
+    {
+        return true;
+    }
+
+    const FVector StartLocation = TraceStartComponent->GetComponentLocation();
+    const FVector EndLocation = TraceEndComponent->GetComponentLocation();
+    if (FVector::DistSquared(StartLocation, EndLocation) > FMath::Square(5.0f))
+    {
+        return false;
+    }
+
+    if (!IsValid(OwnerActor))
+    {
+        return true;
+    }
+
+    const FVector OwnerLocation = OwnerActor->GetActorLocation();
+    const float StartToOwnerSq = FVector::DistSquared(StartLocation, OwnerLocation);
+    const float EndToOwnerSq = FVector::DistSquared(EndLocation, OwnerLocation);
+    return StartToOwnerSq <= FMath::Square(30.0f) && EndToOwnerSq <= FMath::Square(30.0f);
+}
+}
 UAttackSystemComponent::UAttackSystemComponent()
 {
     PrimaryComponentTick.bCanEverTick = true;
@@ -27,7 +60,9 @@ void UAttackSystemComponent::BeginPlay()
     CachedTargetLock = GetOwner() ? GetOwner()->FindComponentByClass<UTargetLockComponent>() : nullptr;
     CachedCombatState = GetOwner() ? GetOwner()->FindComponentByClass<UCombatStateComponent>() : nullptr;
     CachedMoveComp = CachedCharacter.IsValid() ? CachedCharacter->GetCharacterMovement() : nullptr;
+    CachedLocomotion = GetOwner() ? GetOwner()->FindComponentByClass<ULocomotionComponent>() : nullptr;
     SavedWalkSpeed = CachedMoveComp.IsValid() ? CachedMoveComp->MaxWalkSpeed : 0.0f;
+    ResolveDefaultTraceComponents();
 
     if (bLoadMovesetOnBeginPlay && AttackMoveset)
     {
@@ -44,13 +79,6 @@ void UAttackSystemComponent::TickComponent(float DeltaTime, ELevelTick TickType,
 {
     Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
-    EvaluateHoldHeavyInput();
-
-    if (bIsChargingAttack && !bChargeFullySignaled && GetCurrentChargeTime() >= MaxChargeTime)
-    {
-        bChargeFullySignaled = true;
-        OnChargeFullyCharged.Broadcast();
-    }
     if (bPostAttackSpeedRecoveryActive)
     {
         if (!CachedMoveComp.IsValid() && CachedCharacter.IsValid())
@@ -74,6 +102,21 @@ void UAttackSystemComponent::TickComponent(float DeltaTime, ELevelTick TickType,
             {
                 bPostAttackSpeedRecoveryActive = false;
             }
+        }
+    }
+
+    if (bPrimaryAttackHeld)
+    {
+        PrimaryAttackHeldDuration += DeltaTime;
+
+        const bool bShouldTriggerHeldHeavy = !bPrimaryAttackConsumedByHold
+            && PrimaryAttackHeldDuration >= PrimaryHeavyHoldThreshold
+            && HasAttackStartForInputType(ERPGAttackInputType::Heavy);
+
+        if (bShouldTriggerHeldHeavy)
+        {
+            bPrimaryAttackConsumedByHold = true;
+            HandleAttackInputByType(ERPGAttackInputType::Heavy);
         }
     }
 
@@ -124,38 +167,8 @@ void UAttackSystemComponent::ApplyAttackMovesetInternal(const URPGCombatMovesetD
     LastRandomStartStageByType.Reset();
     bUseComboWindowLock = InMoveset->bUseComboWindowLock;
     bAllowSequentialComboFallback = InMoveset->bAllowSequentialComboFallback;
+    AttackContinuationMode = InMoveset->AttackContinuationMode;
     ComboInputBufferDuration = FMath::Max(InMoveset->ComboInputBufferDuration, 0.01f);
-    bEnableHoldHeavyFromPrimaryInput = InMoveset->bEnableHoldHeavyFromPrimaryInput;
-    HoldHeavyTriggerTime = FMath::Max(InMoveset->HoldHeavyTriggerTime, 0.01f);
-    HoldHeavyInputType = InMoveset->HoldHeavyInputType;
-    bEnableDistanceBasedLightVariants = InMoveset->bEnableDistanceBasedLightVariants;
-    LightSlashInputType = InMoveset->LightSlashInputType;
-    LightStabInputType = InMoveset->LightStabInputType;
-    LightStabMinDistance = FMath::Max(0.0f, InMoveset->LightStabMinDistance);
-    LightStabMaxDistance = FMath::Max(LightStabMinDistance, InMoveset->LightStabMaxDistance);
-    bEnableChargedAttack = InMoveset->bEnableChargedAttack;
-    MinChargeTime = FMath::Max(InMoveset->MinChargeTime, 0.01f);
-    MaxChargeTime = FMath::Max(InMoveset->MaxChargeTime, 0.05f);
-    bRequireFullChargeForChargedInput = InMoveset->bRequireFullChargeForChargedInput;
-    PartialChargeInputType = InMoveset->PartialChargeInputType;
-    FullChargeInputType = InMoveset->FullChargeInputType;
-    bScaleChargedDamageByHoldTime = InMoveset->bScaleChargedDamageByHoldTime;
-    MinChargedDamageMultiplier = FMath::Max(InMoveset->MinChargedDamageMultiplier, 0.01f);
-    MaxChargedDamageMultiplier = FMath::Max(InMoveset->MaxChargedDamageMultiplier, 0.01f);
-    MinChargedStaminaMultiplier = FMath::Max(InMoveset->MinChargedStaminaMultiplier, 0.01f);
-    MaxChargedStaminaMultiplier = FMath::Max(InMoveset->MaxChargedStaminaMultiplier, 0.01f);
-    bAutoPlayChargePresentation = InMoveset->bAutoPlayChargePresentation;
-    ChargeStartMontage = InMoveset->ChargeStartMontage;
-    ChargeLoopMontage = InMoveset->ChargeLoopMontage;
-    ChargeStartMontagePlayRate = FMath::Max(InMoveset->ChargeStartMontagePlayRate, 0.01f);
-    ChargeLoopMontagePlayRate = FMath::Max(InMoveset->ChargeLoopMontagePlayRate, 0.01f);
-    ChargeReleaseBlendOutTime = FMath::Max(InMoveset->ChargeReleaseBlendOutTime, 0.0f);
-    bStopChargeMontagesOnRelease = InMoveset->bStopChargeMontagesOnRelease;
-    bEnableFinishers = InMoveset->bEnableFinishers;
-    FinisherChanceOnLethalHit = FMath::Clamp(InMoveset->FinisherChanceOnLethalHit, 0.0f, 1.0f);
-    FinisherMontages = InMoveset->FinisherMontages;
-    FinisherMontagePlayRate = FMath::Max(InMoveset->FinisherMontagePlayRate, 0.01f);
-    bStopCurrentMontageForFinisher = InMoveset->bStopCurrentMontageForFinisher;
 
     if (AttackStages.Num() == 0)
     {
@@ -165,7 +178,7 @@ void UAttackSystemComponent::ApplyAttackMovesetInternal(const URPGCombatMovesetD
 
 void UAttackSystemComponent::HandleAttackInput()
 {
-    HandleAttackInputByType(ResolvePrimaryLightInputType());
+    HandleAttackInputByType(ResolvePrimaryAttackInputType());
 }
 
 void UAttackSystemComponent::HandleAttackInputByType(ERPGAttackInputType InputType)
@@ -192,167 +205,47 @@ void UAttackSystemComponent::HandleAttackInputByType(ERPGAttackInputType InputTy
 
 void UAttackSystemComponent::HandlePrimaryAttackPressed()
 {
-    bPrimaryInputHeld = true;
-    bHoldHeavyTriggeredThisPress = false;
-    PrimaryInputPressStartTimeSeconds = GetWorld() ? static_cast<float>(GetWorld()->GetTimeSeconds()) : 0.0f;
-    UE_LOG(LogTemp, Verbose, TEXT("PrimaryAttack: pressed"));
+    bPrimaryAttackHeld = true;
+    bPrimaryAttackConsumedByHold = false;
+    PrimaryAttackHeldDuration = 0.0f;
 }
 
 void UAttackSystemComponent::HandlePrimaryAttackReleased()
 {
-    const float ReleaseTimeSeconds = GetWorld() ? static_cast<float>(GetWorld()->GetTimeSeconds()) : 0.0f;
-    const float HeldDuration = ReleaseTimeSeconds - PrimaryInputPressStartTimeSeconds;
-    const bool bDidTriggerHeavy = bHoldHeavyTriggeredThisPress;
-    const bool bExceededHoldThreshold = bEnableHoldHeavyFromPrimaryInput && (HeldDuration >= HoldHeavyTriggerTime);
+    const bool bShouldUseHeldLight = !bPrimaryAttackConsumedByHold;
 
-    bPrimaryInputHeld = false;
-    bHoldHeavyTriggeredThisPress = false;
-    PrimaryInputPressStartTimeSeconds = 0.0f;
+    bPrimaryAttackHeld = false;
+    bPrimaryAttackConsumedByHold = false;
+    PrimaryAttackHeldDuration = 0.0f;
 
-    if (bDidTriggerHeavy)
+    if (bShouldUseHeldLight)
     {
-        UE_LOG(LogTemp, Verbose, TEXT("PrimaryAttack: released after heavy trigger (held %.3fs)"), HeldDuration);
-        return;
+        HandleAttackInputByType(ResolvePrimaryAttackInputType());
     }
-
-    if (bExceededHoldThreshold)
-    {
-        UE_LOG(LogTemp, Warning, TEXT("PrimaryAttack: hold threshold reached (%.3fs) but heavy did not trigger. Skipping light fallback."), HeldDuration);
-        return;
-    }
-
-    const ERPGAttackInputType ResolvedLightInput = ResolvePrimaryLightInputType();
-    UE_LOG(LogTemp, Verbose, TEXT("PrimaryAttack: tap release (held %.3fs), triggering %s"), HeldDuration, *UEnum::GetValueAsString(ResolvedLightInput));
-    HandleAttackInputByType(ResolvedLightInput);
 }
+
 bool UAttackSystemComponent::BeginChargeAttack()
 {
-    if (!bEnableChargedAttack || bIsChargingAttack || bIsAttacking)
-    {
-        return false;
-    }
-
-    if (!CanStartAttack())
-    {
-        return false;
-    }
-
-    bIsChargingAttack = true;
-    bChargeFullySignaled = false;
-    ChargeStartTimeSeconds = GetWorld() ? static_cast<float>(GetWorld()->GetTimeSeconds()) : 0.0f;
-
-    if (GetWorld())
-    {
-        GetWorld()->GetTimerManager().ClearTimer(ChargeLoopStartTimerHandle);
-    }
-
-    PlayChargePresentationStart();
-    ApplyChargeMovementPolicy();
-    OnChargeStateChanged.Broadcast(true);
-    return true;
+    return false;
 }
 
 bool UAttackSystemComponent::ReleaseChargeAttack()
 {
-    if (!bIsChargingAttack)
-    {
-        return false;
-    }
-
-    const float HeldTime = GetCurrentChargeTime();
-    const ERPGAttackInputType ChargedInputType = ResolveChargedInputType(HeldTime);
-
-    float ChargedDamageMultiplier = 1.0f;
-    float ChargedStaminaMultiplier = 1.0f;
-    ResolveChargedMultipliers(HeldTime, ChargedDamageMultiplier, ChargedStaminaMultiplier);
-
-    bIsChargingAttack = false;
-    ChargeStartTimeSeconds = 0.0f;
-    bChargeFullySignaled = false;
-
-    if (GetWorld())
-    {
-        GetWorld()->GetTimerManager().ClearTimer(ChargeLoopStartTimerHandle);
-    }
-
-    if (bStopChargeMontagesOnRelease)
-    {
-        StopChargePresentation(ChargeReleaseBlendOutTime);
-    }
-
-    RestoreChargeMovementPolicy();
-    OnChargeStateChanged.Broadcast(false);
-
-    if (bIsAttacking)
-    {
-        BufferedInputType = ChargedInputType;
-        bSaveAttack = true;
-
-        if (!bKeepBufferedInputUntilConsumed && GetWorld())
-        {
-            const float BufferDuration = FMath::Max(ComboInputBufferDuration, 0.01f);
-            GetWorld()->GetTimerManager().ClearTimer(ComboBufferTimerHandle);
-            GetWorld()->GetTimerManager().SetTimer(ComboBufferTimerHandle, this, &UAttackSystemComponent::ClearBufferedComboInput, BufferDuration, false);
-        }
-
-        return true;
-    }
-
-    if (!CanStartAttack())
-    {
-        return false;
-    }
-
-    const int32 StartStage = ResolveComboStartStage(ChargedInputType);
-    if (!AttackStages.IsValidIndex(StartStage))
-    {
-        return false;
-    }
-
-    StartAttackStage(StartStage, ChargedInputType, ChargedDamageMultiplier, ChargedStaminaMultiplier);
-    return true;
+    return false;
 }
 
 void UAttackSystemComponent::CancelChargeAttack()
 {
-    if (!bIsChargingAttack)
-    {
-        return;
-    }
-
-    bIsChargingAttack = false;
-    ChargeStartTimeSeconds = 0.0f;
-    bChargeFullySignaled = false;
-
-    if (GetWorld())
-    {
-        GetWorld()->GetTimerManager().ClearTimer(ChargeLoopStartTimerHandle);
-    }
-
-    StopChargePresentation(ChargeReleaseBlendOutTime);
-    RestoreChargeMovementPolicy();
-    OnChargeStateChanged.Broadcast(false);
 }
 
 float UAttackSystemComponent::GetCurrentChargeTime() const
 {
-    if (!bIsChargingAttack || !GetWorld())
-    {
-        return 0.0f;
-    }
-
-    return FMath::Max(0.0f, static_cast<float>(GetWorld()->GetTimeSeconds()) - ChargeStartTimeSeconds);
+    return 0.0f;
 }
 
 float UAttackSystemComponent::GetCurrentChargeRatio() const
 {
-    if (!bIsChargingAttack)
-    {
-        return 0.0f;
-    }
-
-    const float SafeMaxCharge = FMath::Max(MaxChargeTime, 0.05f);
-    return FMath::Clamp(GetCurrentChargeTime() / SafeMaxCharge, 0.0f, 1.0f);
+    return 0.0f;
 }
 
 void UAttackSystemComponent::BufferComboInput()
@@ -391,7 +284,15 @@ void UAttackSystemComponent::ContinueComboOrStop()
         return;
     }
 
-    const int32 NextStage = ResolveNextComboStage(AttackIndex, BufferedInputType);
+    int32 NextStage = INDEX_NONE;
+    if (AttackContinuationMode == ERPGAttackContinuationMode::ComboLinks)
+    {
+        NextStage = ResolveNextComboStage(AttackIndex, BufferedInputType);
+    }
+    else
+    {
+        NextStage = ResolveComboStartStage(BufferedInputType);
+    }
     if (AttackStages.IsValidIndex(NextStage))
     {
         AttackIndex = NextStage;
@@ -412,6 +313,8 @@ void UAttackSystemComponent::ContinueComboOrStop()
 
 void UAttackSystemComponent::StopCombo()
 {
+    const int32 PreviousAttackIndex = AttackIndex;
+
     bIsAttacking = false;
     bCanAttack = true;
     bSaveAttack = false;
@@ -421,17 +324,40 @@ void UAttackSystemComponent::StopCombo()
     ActiveAttackInputType = ERPGAttackInputType::Light;
     ActiveAttackDamageMultiplier = 1.0f;
     ActiveAttackStaminaMultiplier = 1.0f;
+
+    if (bStopAttackMontageOnComboEnd)
+    {
+    if (UAnimInstance* AnimInstance = GetOwnerAnimInstance())
+        {
+            if (AttackStages.IsValidIndex(PreviousAttackIndex))
+            {
+                if (UAnimMontage* PreviousStageMontage = AttackStages[PreviousAttackIndex].Montage)
+                {
+                    if (AnimInstance->Montage_IsPlaying(PreviousStageMontage))
+                    {
+                        AnimInstance->Montage_Stop(FMath::Max(0.0f, StopAttackMontageBlendOutTime), PreviousStageMontage);
+                    }
+                }
+            }
+        }
+    }
+
+    StopTrace();
     RestoreStageMovementPolicy();
 
     RestorePostAttackMovementLock();
 
-    if (bClearGroundMomentumOnAttackEnd && CachedMoveComp.IsValid() && CachedMoveComp->IsMovingOnGround())
+    const bool bHasMovementIntent = HasMovementIntent();
+
+    if (bClearGroundMomentumOnAttackEnd
+        && CachedMoveComp.IsValid()
+        && CachedMoveComp->IsMovingOnGround()
+        && (!bPreserveMomentumWhenMovementInputHeld || !bHasMovementIntent))
     {
         const FVector CurrentVelocity = CachedMoveComp->Velocity;
         CachedMoveComp->Velocity = FVector(0.0f, 0.0f, CurrentVelocity.Z);
     }
 
-    CancelChargeAttack();
     ApplyPostAttackMovementLock();
 
     if (GetWorld())
@@ -445,7 +371,7 @@ void UAttackSystemComponent::StopCombo()
         CachedCombatState->RequestState(ERPGCombatState::Idle);
     }
 
-    OnAttackEnded.Broadcast(AttackIndex);
+    OnAttackEnded.Broadcast(PreviousAttackIndex);
 }
 
 void UAttackSystemComponent::OpenComboWindow()
@@ -498,6 +424,19 @@ void UAttackSystemComponent::StartTrace(USceneComponent* InTraceStart, USceneCom
     GetWorld()->GetTimerManager().SetTimer(TraceTimerHandle, this, &UAttackSystemComponent::TickTrace, SafeInterval, true);
 }
 
+void UAttackSystemComponent::StartConfiguredTrace()
+{
+    ResolveDefaultTraceComponents();
+
+    if (!ShouldUseFallbackTrace(TraceStartComponent, TraceEndComponent, GetOwner()))
+    {
+        StartTrace(TraceStartComponent.Get(), TraceEndComponent.Get());
+        return;
+    }
+
+    BeginAutoManagedTrace();
+}
+
 void UAttackSystemComponent::StopTrace()
 {
     if (GetWorld())
@@ -533,6 +472,34 @@ bool UAttackSystemComponent::CanStartAttack() const
     return true;
 }
 
+bool UAttackSystemComponent::HasAttackStartForInputType(ERPGAttackInputType InputType) const
+{
+    return AttackStages.IsValidIndex(ResolveRandomizedStartStage(InputType))
+        || (AttackStartStageByType.Contains(InputType)
+            && AttackStages.IsValidIndex(AttackStartStageByType[InputType]));
+}
+
+ERPGAttackInputType UAttackSystemComponent::ResolvePrimaryAttackInputType() const
+{
+    TArray<ERPGAttackInputType> VariantCandidates;
+
+    if (HasAttackStartForInputType(ERPGAttackInputType::LightSlash))
+    {
+        VariantCandidates.Add(ERPGAttackInputType::LightSlash);
+    }
+
+    if (HasAttackStartForInputType(ERPGAttackInputType::LightStab))
+    {
+        VariantCandidates.Add(ERPGAttackInputType::LightStab);
+    }
+
+    if (VariantCandidates.Num() > 0)
+    {
+        return VariantCandidates[FMath::RandRange(0, VariantCandidates.Num() - 1)];
+    }
+
+    return ERPGAttackInputType::Light;
+}
 
 int32 UAttackSystemComponent::ResolveRandomizedStartStage(ERPGAttackInputType InputType) const
 {
@@ -575,6 +542,7 @@ int32 UAttackSystemComponent::ResolveRandomizedStartStage(ERPGAttackInputType In
     LastRandomStartStageByType.Add(InputType, SelectedIndex);
     return SelectedIndex;
 }
+
 int32 UAttackSystemComponent::ResolveComboStartStage(ERPGAttackInputType InputType) const
 {
     const int32 RandomizedStage = ResolveRandomizedStartStage(InputType);
@@ -591,20 +559,43 @@ int32 UAttackSystemComponent::ResolveComboStartStage(ERPGAttackInputType InputTy
         }
     }
 
-    // Backward compatibility: if slash/stab is not explicitly mapped, fall back to generic Light.
-    if (InputType == ERPGAttackInputType::LightSlash || InputType == ERPGAttackInputType::LightStab)
+    if (InputType == ERPGAttackInputType::Light)
     {
-        const int32 LightRandomizedStage = ResolveRandomizedStartStage(ERPGAttackInputType::Light);
-        if (AttackStages.IsValidIndex(LightRandomizedStage))
+        const TArray<ERPGAttackInputType> CompatibleInputs = {
+            ERPGAttackInputType::LightSlash,
+            ERPGAttackInputType::LightStab
+        };
+
+        for (const ERPGAttackInputType CompatibleInput : CompatibleInputs)
         {
-            return LightRandomizedStage;
+            const int32 CompatibleRandomizedStage = ResolveRandomizedStartStage(CompatibleInput);
+            if (AttackStages.IsValidIndex(CompatibleRandomizedStage))
+            {
+                return CompatibleRandomizedStage;
+            }
+
+            if (const int32* CompatibleStage = AttackStartStageByType.Find(CompatibleInput))
+            {
+                if (AttackStages.IsValidIndex(*CompatibleStage))
+                {
+                    return *CompatibleStage;
+                }
+            }
+        }
+    }
+    else if (InputType == ERPGAttackInputType::LightSlash || InputType == ERPGAttackInputType::LightStab)
+    {
+        const int32 GenericLightRandomizedStage = ResolveRandomizedStartStage(ERPGAttackInputType::Light);
+        if (AttackStages.IsValidIndex(GenericLightRandomizedStage))
+        {
+            return GenericLightRandomizedStage;
         }
 
-        if (const int32* LightStage = AttackStartStageByType.Find(ERPGAttackInputType::Light))
+        if (const int32* GenericLightStage = AttackStartStageByType.Find(ERPGAttackInputType::Light))
         {
-            if (AttackStages.IsValidIndex(*LightStage))
+            if (AttackStages.IsValidIndex(*GenericLightStage))
             {
-                return *LightStage;
+                return *GenericLightStage;
             }
         }
     }
@@ -624,21 +615,25 @@ int32 UAttackSystemComponent::ResolveNextComboStage(int32 FromStageIndex, ERPGAt
         return INDEX_NONE;
     }
 
-    const FRPGAttackStage& Stage = AttackStages[FromStageIndex];
-    for (const FRPGComboLink& Link : Stage.ComboLinks)
+    TArray<ERPGAttackInputType> CompatibleInputs;
+    CompatibleInputs.Add(InputType);
+
+    if (InputType == ERPGAttackInputType::Light)
     {
-        if (Link.InputType == InputType && AttackStages.IsValidIndex(Link.NextStageIndex))
-        {
-            return Link.NextStageIndex;
-        }
+        CompatibleInputs.Add(ERPGAttackInputType::LightSlash);
+        CompatibleInputs.Add(ERPGAttackInputType::LightStab);
+    }
+    else if (InputType == ERPGAttackInputType::LightSlash || InputType == ERPGAttackInputType::LightStab)
+    {
+        CompatibleInputs.Add(ERPGAttackInputType::Light);
     }
 
-    // Backward compatibility: allow light slash/stab inputs to consume generic Light combo links.
-    if (InputType == ERPGAttackInputType::LightSlash || InputType == ERPGAttackInputType::LightStab)
+    const FRPGAttackStage& Stage = AttackStages[FromStageIndex];
+    for (const ERPGAttackInputType CompatibleInput : CompatibleInputs)
     {
         for (const FRPGComboLink& Link : Stage.ComboLinks)
         {
-            if (Link.InputType == ERPGAttackInputType::Light && AttackStages.IsValidIndex(Link.NextStageIndex))
+            if (Link.InputType == CompatibleInput && AttackStages.IsValidIndex(Link.NextStageIndex))
             {
                 return Link.NextStageIndex;
             }
@@ -652,26 +647,7 @@ int32 UAttackSystemComponent::ResolveNextComboStage(int32 FromStageIndex, ERPGAt
 
     return INDEX_NONE;
 }
-ERPGAttackInputType UAttackSystemComponent::ResolvePrimaryLightInputType() const
-{
-    if (!bEnableDistanceBasedLightVariants)
-    {
-        return ERPGAttackInputType::Light;
-    }
 
-    if (!GetOwner() || !CachedTargetLock.IsValid() || !CachedTargetLock->IsLockedOn())
-    {
-        return LightSlashInputType;
-    }
-
-    const FVector OwnerLocation = GetOwner()->GetActorLocation();
-    const FVector TargetLocation = CachedTargetLock->GetLockTargetLocation();
-    const float DistanceToTarget = FVector::Dist2D(OwnerLocation, TargetLocation);
-
-    const float MinDistance = FMath::Max(0.0f, LightStabMinDistance);
-    const float MaxDistance = FMath::Max(MinDistance, LightStabMaxDistance);
-    return (DistanceToTarget >= MinDistance && DistanceToTarget <= MaxDistance) ? LightStabInputType : LightSlashInputType;
-}
 
 bool UAttackSystemComponent::ConsumeStaminaForCurrentStage() const
 {
@@ -734,38 +710,88 @@ void UAttackSystemComponent::StartAttackStage(int32 StageIndex, ERPGAttackInputT
         GetWorld()->GetTimerManager().ClearTimer(ComboBufferTimerHandle);
     }
 
-    StopChargePresentation(ChargeReleaseBlendOutTime);
     RestorePostAttackMovementLock();
     bPostAttackSpeedRecoveryActive = false;
+    StopTrace();
     RestoreStageMovementPolicy();
     ApplyStageMovementPolicy(AttackStages[AttackIndex]);
     ResetHitActors();
-    OnAttackStarted.Broadcast(AttackIndex);
+    ResolveDefaultTraceComponents();
 
+    bool bUsingMontageEndComboFlow = false;
+    float ForcedResetDelay = FMath::Max(AttackStages[AttackIndex].ComboResetDelay, 0.01f);
+    bool bUseNotifyDrivenTraceWindow = false;
     if (UAnimInstance* AnimInstance = GetOwnerAnimInstance())
     {
         if (UAnimMontage* StageMontage = AttackStages[AttackIndex].Montage)
         {
+            bUseNotifyDrivenTraceWindow = MontageUsesNotifyDrivenTraceWindow(StageMontage);
             if (bForceMontageRestartPerStage && AnimInstance->Montage_IsPlaying(StageMontage))
             {
                 AnimInstance->Montage_Stop(0.02f, StageMontage);
             }
 
-            AnimInstance->Montage_Play(
+            const float PlayedMontageDuration = AnimInstance->Montage_Play(
                 StageMontage,
                 1.0f,
                 EMontagePlayReturnType::MontageLength,
                 0.0f,
                 true);
+
+            if (PlayedMontageDuration > 0.0f)
+            {
+                ForcedResetDelay = FMath::Max(ForcedResetDelay, PlayedMontageDuration + FMath::Max(StopAttackMontageBlendOutTime, 0.05f));
+            }
+
+            if (bUseMontageBlendOutForComboFlow)
+            {
+                FOnMontageBlendingOutStarted BlendOutDelegate;
+                BlendOutDelegate.BindUObject(this, &UAttackSystemComponent::HandleStageMontageBlendingOut);
+                AnimInstance->Montage_SetBlendingOutDelegate(BlendOutDelegate, StageMontage);
+                bUsingMontageEndComboFlow = true;
+            }
         }
     }
 
+    if (bAutoManageWeaponTrace && !bUseNotifyDrivenTraceWindow)
+    {
+        BeginAutoManagedTrace();
+    }
+
+    OnAttackStarted.Broadcast(AttackIndex);
+
     if (GetWorld())
     {
-        const float ResetDelay = FMath::Max(AttackStages[AttackIndex].ComboResetDelay, 0.01f);
         GetWorld()->GetTimerManager().ClearTimer(ComboResetTimerHandle);
-        GetWorld()->GetTimerManager().SetTimer(ComboResetTimerHandle, this, &UAttackSystemComponent::ResetComboState, ResetDelay, false);
+
+        if (!bUsingMontageEndComboFlow)
+        {
+            ForcedResetDelay = FMath::Max(AttackStages[AttackIndex].ComboResetDelay, 0.01f);
+        }
+
+        GetWorld()->GetTimerManager().SetTimer(ComboResetTimerHandle, this, &UAttackSystemComponent::ResetComboState, ForcedResetDelay, false);
     }
+}
+
+void UAttackSystemComponent::HandleStageMontageBlendingOut(UAnimMontage* Montage, bool bInterrupted)
+{
+    if (!bUseMontageBlendOutForComboFlow || !bIsAttacking || !AttackStages.IsValidIndex(AttackIndex))
+    {
+        return;
+    }
+
+    if (AttackStages[AttackIndex].Montage != Montage)
+    {
+        return;
+    }
+
+    if (bInterrupted)
+    {
+        StopCombo();
+        return;
+    }
+
+    ContinueComboOrStop();
 }
 
 void UAttackSystemComponent::ResetComboState()
@@ -811,15 +837,52 @@ void UAttackSystemComponent::UpdateAttackFacing(float DeltaTime)
     }
 }
 
-void UAttackSystemComponent::TickTrace()
+void UAttackSystemComponent::BeginAutoManagedTrace()
 {
-    if (!TraceStartComponent.IsValid() || !TraceEndComponent.IsValid())
+    if (!GetWorld() || bTraceActive)
     {
         return;
     }
 
-    const FVector Start = TraceStartComponent->GetComponentLocation();
-    const FVector End = TraceEndComponent->GetComponentLocation();
+    if (!ShouldUseFallbackTrace(TraceStartComponent, TraceEndComponent, GetOwner()))
+    {
+        StartTrace(TraceStartComponent.Get(), TraceEndComponent.Get());
+        return;
+    }
+
+    bTraceActive = true;
+
+    if (CachedCombatState.IsValid())
+    {
+        CachedCombatState->RequestState(ERPGCombatState::AttackActive);
+    }
+
+    GetWorld()->GetTimerManager().ClearTimer(TraceTimerHandle);
+    TickTrace();
+
+    const float SafeInterval = FMath::Max(TraceInterval, 0.001f);
+    GetWorld()->GetTimerManager().SetTimer(TraceTimerHandle, this, &UAttackSystemComponent::TickTrace, SafeInterval, true);
+}
+void UAttackSystemComponent::TickTrace()
+{
+    FVector Start = FVector::ZeroVector;
+    FVector End = FVector::ZeroVector;
+
+    if (!ShouldUseFallbackTrace(TraceStartComponent, TraceEndComponent, GetOwner()))
+    {
+        Start = TraceStartComponent->GetComponentLocation();
+        End = TraceEndComponent->GetComponentLocation();
+    }
+    else if (GetOwner())
+    {
+        const FTransform OwnerTransform = GetOwner()->GetActorTransform();
+        Start = OwnerTransform.TransformPosition(TraceFallbackLocalStartOffset);
+        End = Start + (GetOwner()->GetActorForwardVector().GetSafeNormal2D() * TraceFallbackForwardDistance);
+    }
+    else
+    {
+        return;
+    }
 
     TArray<FHitResult> HitResults;
     TArray<AActor*> ActorsToIgnore;
@@ -859,153 +922,88 @@ void UAttackSystemComponent::TickTrace()
             continue;
         }
 
-        if (!DamageableTag.IsNone() && !HitActor->ActorHasTag(DamageableTag))
+        UPlayerStatsComponent* TargetStats = HitActor->FindComponentByClass<UPlayerStatsComponent>();
+        const bool bHasDamageableTag = DamageableTag.IsNone() || HitActor->ActorHasTag(DamageableTag);
+        if (!TargetStats && !bHasDamageableTag)
         {
             continue;
         }
 
         HitActorsThisSwing.Add(HitActorPtr);
 
-        const float BaseDamage = AttackStages.IsValidIndex(AttackIndex) ? AttackStages[AttackIndex].Damage : 10.0f;
-        const float Damage = BaseDamage * WeaponDamageMultiplier * ActiveAttackDamageMultiplier;
+        const FRPGDamageSpec DamageSpec = BuildDamageSpec(Hit);
+        UE_LOG(LogTemp, Log, TEXT("Attack hit: Owner=%s Target=%s Damage=%.2f"), *GetNameSafe(GetOwner()), *GetNameSafe(HitActor), DamageSpec.Damage);
 
-        UPlayerStatsComponent* TargetStats = HitActor->FindComponentByClass<UPlayerStatsComponent>();
-        const bool bPredictedLethal = TargetStats && !TargetStats->IsDead() && (Damage >= TargetStats->CurrentHealth);
-        const bool bRollFinisher = bEnableFinishers
-            && bPredictedLethal
-            && FinisherChanceOnLethalHit > 0.0f
-            && FinisherMontages.Num() > 0
-            && (FMath::FRand() <= FinisherChanceOnLethalHit);
-
-        UGameplayStatics::ApplyDamage(
-            HitActor,
-            Damage,
-            CachedCharacter.IsValid() ? CachedCharacter->GetController() : nullptr,
-            GetOwner(),
-            nullptr);
-
-        if (bRollFinisher && TargetStats && TargetStats->IsDead())
+        if (TargetStats)
         {
-            TryPlayFinisherMontage(HitActor);
+            TargetStats->ApplyIncomingHit(DamageSpec);
+        }
+        else
+        {
+            UGameplayStatics::ApplyDamage(
+                HitActor,
+                DamageSpec.Damage,
+                DamageSpec.EventInstigator,
+                DamageSpec.DamageCauser,
+                nullptr);
         }
 
         OnAttackHit.Broadcast(HitActor);
     }
 }
 
-void UAttackSystemComponent::EvaluateHoldHeavyInput()
+FRPGDamageSpec UAttackSystemComponent::BuildDamageSpec(const FHitResult& Hit) const
 {
-    if (!bEnableHoldHeavyFromPrimaryInput || !bPrimaryInputHeld || bHoldHeavyTriggeredThisPress || !GetWorld())
+    FRPGDamageSpec DamageSpec;
+    DamageSpec.DamageCauser = GetOwner();
+    DamageSpec.EventInstigator = CachedCharacter.IsValid() ? CachedCharacter->GetController() : nullptr;
+    DamageSpec.HitLocation = Hit.ImpactPoint;
+    DamageSpec.HitDirection = ResolveHitDirectionAgainstActor(Hit.GetActor());
+
+    if (!AttackStages.IsValidIndex(AttackIndex))
     {
-        return;
+        DamageSpec.Damage *= WeaponDamageMultiplier * ActiveAttackDamageMultiplier;
+        return DamageSpec;
     }
 
-    const float HeldTime = static_cast<float>(GetWorld()->GetTimeSeconds()) - PrimaryInputPressStartTimeSeconds;
-    if (HeldTime < HoldHeavyTriggerTime)
-    {
-        return;
-    }
-
-    if (TryTriggerHoldHeavyAttack())
-    {
-        bHoldHeavyTriggeredThisPress = true;
-    }
+    const FRPGAttackStage& Stage = AttackStages[AttackIndex];
+    DamageSpec.Damage = Stage.Damage * WeaponDamageMultiplier * ActiveAttackDamageMultiplier;
+    DamageSpec.HitstunDuration = Stage.HitstunDuration;
+    DamageSpec.ReactionStrength = Stage.ReactionStrength;
+    DamageSpec.StaggerDamage = Stage.StaggerDamage;
+    DamageSpec.bCanBeBlocked = Stage.bCanBeBlocked;
+    DamageSpec.bCanBeParried = Stage.bCanBeParried;
+    return DamageSpec;
 }
 
-bool UAttackSystemComponent::TryTriggerHoldHeavyAttack()
+ERPGHitDirection UAttackSystemComponent::ResolveHitDirectionAgainstActor(const AActor* TargetActor) const
 {
-    if (bIsAttacking)
+    if (!IsValid(TargetActor) || !GetOwner())
     {
-        BufferComboInputByType(HoldHeavyInputType);
-        return true;
+        return ERPGHitDirection::Front;
     }
 
-    if (!CanStartAttack())
+    FVector ToAttacker = GetOwner()->GetActorLocation() - TargetActor->GetActorLocation();
+    ToAttacker.Z = 0.0f;
+    ToAttacker = ToAttacker.GetSafeNormal();
+
+    if (ToAttacker.IsNearlyZero())
     {
-        return false;
+        return ERPGHitDirection::Front;
     }
 
-    const int32 StartStage = ResolveComboStartStage(HoldHeavyInputType);
-    if (!AttackStages.IsValidIndex(StartStage))
+    const FVector TargetForward = TargetActor->GetActorForwardVector().GetSafeNormal2D();
+    const FVector TargetRight = TargetActor->GetActorRightVector().GetSafeNormal2D();
+    const float ForwardDot = FVector::DotProduct(TargetForward, ToAttacker);
+    const float RightDot = FVector::DotProduct(TargetRight, ToAttacker);
+
+    if (FMath::Abs(ForwardDot) >= FMath::Abs(RightDot))
     {
-        return false;
+        return ForwardDot >= 0.0f ? ERPGHitDirection::Front : ERPGHitDirection::Back;
     }
 
-    UE_LOG(LogTemp, Log, TEXT("HoldHeavy: triggering heavy attack at stage index %d"), StartStage);
-    StartAttackStage(StartStage, HoldHeavyInputType);
-    return true;
+    return RightDot >= 0.0f ? ERPGHitDirection::Right : ERPGHitDirection::Left;
 }
-
-ERPGAttackInputType UAttackSystemComponent::ResolveChargedInputType(float HeldTime) const
-{
-    if (HeldTime < MinChargeTime)
-    {
-        return PartialChargeInputType;
-    }
-
-    if (!bRequireFullChargeForChargedInput)
-    {
-        return FullChargeInputType;
-    }
-
-    const float SafeMaxCharge = FMath::Max(MaxChargeTime, 0.05f);
-    return HeldTime >= SafeMaxCharge ? FullChargeInputType : PartialChargeInputType;
-}
-
-void UAttackSystemComponent::ResolveChargedMultipliers(float HeldTime, float& OutDamageMultiplier, float& OutStaminaMultiplier) const
-{
-    OutDamageMultiplier = 1.0f;
-    OutStaminaMultiplier = 1.0f;
-
-    if (!bScaleChargedDamageByHoldTime)
-    {
-        return;
-    }
-
-    const float SafeMaxCharge = FMath::Max(MaxChargeTime, 0.05f);
-    const float ChargeAlpha = FMath::Clamp(HeldTime / SafeMaxCharge, 0.0f, 1.0f);
-
-    OutDamageMultiplier = FMath::Lerp(MinChargedDamageMultiplier, MaxChargedDamageMultiplier, ChargeAlpha);
-    OutStaminaMultiplier = FMath::Lerp(MinChargedStaminaMultiplier, MaxChargedStaminaMultiplier, ChargeAlpha);
-}
-
-void UAttackSystemComponent::TryPlayFinisherMontage(AActor* TargetActor)
-{
-    UAnimInstance* AnimInstance = GetOwnerAnimInstance();
-    if (!AnimInstance)
-    {
-        return;
-    }
-
-    TArray<UAnimMontage*> ValidMontages;
-    for (UAnimMontage* Montage : FinisherMontages)
-    {
-        if (Montage)
-        {
-            ValidMontages.Add(Montage);
-        }
-    }
-
-    if (ValidMontages.Num() == 0)
-    {
-        return;
-    }
-
-    UAnimMontage* SelectedMontage = ValidMontages[FMath::RandRange(0, ValidMontages.Num() - 1)];
-    if (!SelectedMontage)
-    {
-        return;
-    }
-
-    if (bStopCurrentMontageForFinisher)
-    {
-        AnimInstance->Montage_Stop(0.08f);
-    }
-
-    AnimInstance->Montage_Play(SelectedMontage, FMath::Max(0.01f, FinisherMontagePlayRate));
-    OnFinisherTriggered.Broadcast(TargetActor);
-}
-
 UAnimInstance* UAttackSystemComponent::GetOwnerAnimInstance() const
 {
     if (!CachedCharacter.IsValid() || !CachedCharacter->GetMesh())
@@ -1016,121 +1014,54 @@ UAnimInstance* UAttackSystemComponent::GetOwnerAnimInstance() const
     return CachedCharacter->GetMesh()->GetAnimInstance();
 }
 
-void UAttackSystemComponent::PlayChargePresentationStart()
+void UAttackSystemComponent::ResolveDefaultTraceComponents()
 {
-    if (!bAutoPlayChargePresentation)
+    if (TraceStartComponent.IsValid() && TraceEndComponent.IsValid())
     {
         return;
     }
 
-    UAnimInstance* AnimInstance = GetOwnerAnimInstance();
-    if (!AnimInstance)
+    if (!GetOwner())
     {
         return;
     }
 
-    if (ChargeStartMontage)
-    {
-        AnimInstance->Montage_Play(ChargeStartMontage, FMath::Max(0.01f, ChargeStartMontagePlayRate));
+    TArray<USceneComponent*> SceneComponents;
+    GetOwner()->GetComponents<USceneComponent>(SceneComponents);
 
-        if (ChargeLoopMontage && GetWorld())
+    for (USceneComponent* SceneComponent : SceneComponents)
+    {
+        if (!SceneComponent)
         {
-            const float Duration = FMath::Max(0.01f, ChargeStartMontage->GetPlayLength() / FMath::Max(0.01f, ChargeStartMontagePlayRate));
-            GetWorld()->GetTimerManager().ClearTimer(ChargeLoopStartTimerHandle);
-            GetWorld()->GetTimerManager().SetTimer(ChargeLoopStartTimerHandle, this, &UAttackSystemComponent::PlayChargePresentationLoop, Duration, false);
+            continue;
         }
 
-        return;
-    }
-
-    PlayChargePresentationLoop();
-}
-
-void UAttackSystemComponent::PlayChargePresentationLoop()
-{
-    if (!bIsChargingAttack || !bAutoPlayChargePresentation || !ChargeLoopMontage)
-    {
-        return;
-    }
-
-    UAnimInstance* AnimInstance = GetOwnerAnimInstance();
-    if (!AnimInstance)
-    {
-        return;
-    }
-
-    AnimInstance->Montage_Play(ChargeLoopMontage, FMath::Max(0.01f, ChargeLoopMontagePlayRate));
-}
-
-void UAttackSystemComponent::StopChargePresentation(float BlendOutTime)
-{
-    UAnimInstance* AnimInstance = GetOwnerAnimInstance();
-    if (!AnimInstance)
-    {
-        return;
-    }
-
-    const float SafeBlend = FMath::Max(0.0f, BlendOutTime);
-
-    if (ChargeStartMontage && AnimInstance->Montage_IsPlaying(ChargeStartMontage))
-    {
-        AnimInstance->Montage_Stop(SafeBlend, ChargeStartMontage);
-    }
-
-    if (ChargeLoopMontage && AnimInstance->Montage_IsPlaying(ChargeLoopMontage))
-    {
-        AnimInstance->Montage_Stop(SafeBlend, ChargeLoopMontage);
+        if (!TraceStartComponent.IsValid() && SceneComponent->GetFName() == DefaultTraceStartComponentName)
+        {
+            TraceStartComponent = SceneComponent;
+        }
+        else if (!TraceEndComponent.IsValid() && SceneComponent->GetFName() == DefaultTraceEndComponentName)
+        {
+            TraceEndComponent = SceneComponent;
+        }
     }
 }
-
-
-
-
-
-
-
-
-
-void UAttackSystemComponent::ApplyChargeMovementPolicy()
+bool UAttackSystemComponent::MontageUsesNotifyDrivenTraceWindow(const UAnimMontage* Montage) const
 {
-    if (!bLimitMovementWhileCharging)
+    if (!Montage)
     {
-        return;
+        return false;
     }
 
-    if (!CachedMoveComp.IsValid() && CachedCharacter.IsValid())
+    for (const FAnimNotifyEvent& NotifyEvent : Montage->Notifies)
     {
-        CachedMoveComp = CachedCharacter->GetCharacterMovement();
+        if (NotifyEvent.NotifyStateClass && NotifyEvent.NotifyStateClass->IsA<URPGAnimNotifyState_AttackTraceWindow>())
+        {
+            return true;
+        }
     }
 
-    if (!CachedMoveComp.IsValid())
-    {
-        return;
-    }
-
-    if (!bChargeWalkSpeedOverrideActive)
-    {
-        SavedChargeWalkSpeed = CachedMoveComp->MaxWalkSpeed;
-        bChargeWalkSpeedOverrideActive = true;
-    }
-
-    const float SpeedMultiplier = FMath::Clamp(ChargeWalkSpeedMultiplier, 0.0f, 1.0f);
-    CachedMoveComp->MaxWalkSpeed = SavedChargeWalkSpeed * SpeedMultiplier;
-}
-
-void UAttackSystemComponent::RestoreChargeMovementPolicy()
-{
-    if (!bChargeWalkSpeedOverrideActive)
-    {
-        return;
-    }
-
-    if (CachedMoveComp.IsValid())
-    {
-        CachedMoveComp->MaxWalkSpeed = SavedChargeWalkSpeed;
-    }
-
-    bChargeWalkSpeedOverrideActive = false;
+    return false;
 }
 
 void UAttackSystemComponent::ApplyStageMovementPolicy(const FRPGAttackStage& Stage)
@@ -1148,29 +1079,26 @@ void UAttackSystemComponent::ApplyStageMovementPolicy(const FRPGAttackStage& Sta
             bStageWalkSpeedOverrideActive = true;
         }
 
-        float SpeedMultiplier = FMath::Clamp(Stage.MaxWalkSpeedMultiplierDuringStage, 0.0f, 1.0f);
+        float SpeedMultiplier = Stage.MaxWalkSpeedMultiplierDuringStage;
         if (bClampAttackWalkSpeedMultiplier)
         {
-            SpeedMultiplier = FMath::Max(SpeedMultiplier, FMath::Clamp(MinAttackWalkSpeedMultiplier, 0.0f, 1.0f));
+            SpeedMultiplier = FMath::Clamp(SpeedMultiplier, MinAttackWalkSpeedMultiplier, 1.0f);
         }
-        CachedMoveComp->MaxWalkSpeed = SavedWalkSpeed * SpeedMultiplier;
+
+        CachedMoveComp->MaxWalkSpeed = SavedWalkSpeed * FMath::Max(0.0f, SpeedMultiplier);
     }
 
-    if (UAnimInstance* AnimInstance = GetOwnerAnimInstance())
+    if (Stage.bUseRootMotionForStage)
     {
-        if (!bStageRootMotionOverrideActive)
+        if (UAnimInstance* AnimInstance = GetOwnerAnimInstance())
         {
-            SavedRootMotionMode = static_cast<uint8>(AnimInstance->RootMotionMode);
-            bStageRootMotionOverrideActive = true;
-        }
+            if (!bStageRootMotionOverrideActive)
+            {
+                SavedRootMotionMode = static_cast<uint8>(AnimInstance->RootMotionMode);
+                bStageRootMotionOverrideActive = true;
+            }
 
-        if (Stage.bUseRootMotionForStage)
-        {
             AnimInstance->SetRootMotionMode(ERootMotionMode::RootMotionFromMontagesOnly);
-        }
-        else
-        {
-            AnimInstance->SetRootMotionMode(ERootMotionMode::NoRootMotionExtraction);
         }
     }
 }
@@ -1189,49 +1117,18 @@ void UAttackSystemComponent::RestoreStageMovementPolicy()
         {
             AnimInstance->SetRootMotionMode(static_cast<ERootMotionMode::Type>(SavedRootMotionMode));
         }
+        bStageRootMotionOverrideActive = false;
     }
-    bStageRootMotionOverrideActive = false;
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 void UAttackSystemComponent::ApplyPostAttackMovementLock()
 {
-    if (!bApplyPostAttackMovementLock || PostAttackMovementLockDuration <= 0.0f)
+    if (!bApplyPostAttackMovementLock)
+    {
+        return;
+    }
+
+    if (bSkipPostAttackMovementLockWhenMovementInputHeld && HasMovementIntent())
     {
         return;
     }
@@ -1246,66 +1143,95 @@ void UAttackSystemComponent::ApplyPostAttackMovementLock()
         return;
     }
 
-    if (!bPostAttackMovementLockActive)
-    {
-        SavedPostAttackWalkSpeed = CachedMoveComp->MaxWalkSpeed;
-        bPostAttackMovementLockActive = true;
-    }
-
-    bPostAttackSpeedRecoveryActive = false;
-    PostAttackSpeedRecoveryElapsed = 0.0f;
-    PostAttackSpeedRecoveryStartSpeed = 0.0f;
-    PostAttackSpeedRecoveryTargetSpeed = 0.0f;
+    SavedPostAttackWalkSpeed = CachedMoveComp->MaxWalkSpeed;
     CachedMoveComp->MaxWalkSpeed = 0.0f;
+    bPostAttackMovementLockActive = true;
 
     if (GetWorld())
     {
         GetWorld()->GetTimerManager().ClearTimer(PostAttackMovementLockTimerHandle);
-        GetWorld()->GetTimerManager().SetTimer(
-            PostAttackMovementLockTimerHandle,
-            this,
-            &UAttackSystemComponent::RestorePostAttackMovementLock,
-            PostAttackMovementLockDuration,
-            false);
+        if (PostAttackMovementLockDuration > 0.0f)
+        {
+            GetWorld()->GetTimerManager().SetTimer(PostAttackMovementLockTimerHandle, this, &UAttackSystemComponent::RestorePostAttackMovementLock, PostAttackMovementLockDuration, false);
+        }
     }
 }
 
 void UAttackSystemComponent::RestorePostAttackMovementLock()
 {
+    if (GetWorld())
+    {
+        GetWorld()->GetTimerManager().ClearTimer(PostAttackMovementLockTimerHandle);
+    }
+
     if (!bPostAttackMovementLockActive)
     {
         return;
     }
 
-    if (CachedMoveComp.IsValid())
-    {
-        const float TargetWalkSpeed = SavedPostAttackWalkSpeed;
-
-        if (bUsePostAttackSpeedRecoveryRamp && PostAttackSpeedRecoveryDuration > 0.0f)
-        {
-            PostAttackSpeedRecoveryStartSpeed = CachedMoveComp->MaxWalkSpeed;
-            PostAttackSpeedRecoveryTargetSpeed = TargetWalkSpeed;
-            PostAttackSpeedRecoveryElapsed = 0.0f;
-            bPostAttackSpeedRecoveryActive = !FMath::IsNearlyEqual(PostAttackSpeedRecoveryStartSpeed, PostAttackSpeedRecoveryTargetSpeed);
-
-            if (!bPostAttackSpeedRecoveryActive)
-            {
-                CachedMoveComp->MaxWalkSpeed = TargetWalkSpeed;
-            }
-        }
-        else
-        {
-            bPostAttackSpeedRecoveryActive = false;
-            CachedMoveComp->MaxWalkSpeed = TargetWalkSpeed;
-        }
-    }
-
     bPostAttackMovementLockActive = false;
 
-    if (GetWorld())
+    if (!CachedMoveComp.IsValid() && CachedCharacter.IsValid())
     {
-        GetWorld()->GetTimerManager().ClearTimer(PostAttackMovementLockTimerHandle);
+        CachedMoveComp = CachedCharacter->GetCharacterMovement();
+    }
+
+    if (!CachedMoveComp.IsValid())
+    {
+        return;
+    }
+
+    if (bUsePostAttackSpeedRecoveryRamp && PostAttackSpeedRecoveryDuration > 0.0f)
+    {
+        bPostAttackSpeedRecoveryActive = true;
+        PostAttackSpeedRecoveryElapsed = 0.0f;
+        PostAttackSpeedRecoveryStartSpeed = CachedMoveComp->MaxWalkSpeed;
+        PostAttackSpeedRecoveryTargetSpeed = SavedPostAttackWalkSpeed;
+    }
+    else
+    {
+        CachedMoveComp->MaxWalkSpeed = SavedPostAttackWalkSpeed;
+        bPostAttackSpeedRecoveryActive = false;
     }
 }
+
+bool UAttackSystemComponent::HasMovementIntent() const
+{
+    if (!CachedCharacter.IsValid())
+    {
+        return false;
+    }
+
+    const FVector PendingInput = CachedCharacter->GetPendingMovementInputVector();
+    if (!PendingInput.IsNearlyZero())
+    {
+        return true;
+    }
+
+    if (CachedMoveComp.IsValid())
+    {
+        return !CachedMoveComp->GetCurrentAcceleration().IsNearlyZero();
+    }
+
+    return false;
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 

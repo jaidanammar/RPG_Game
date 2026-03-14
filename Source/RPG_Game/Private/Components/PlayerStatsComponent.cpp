@@ -6,7 +6,7 @@
 
 UPlayerStatsComponent::UPlayerStatsComponent()
 {
-    PrimaryComponentTick.bCanEverTick = false;
+    PrimaryComponentTick.bCanEverTick = true;
 }
 
 void UPlayerStatsComponent::BeginPlay()
@@ -20,6 +20,23 @@ void UPlayerStatsComponent::BeginPlay()
 
     ClampStats();
     BroadcastAllStats();
+}
+
+void UPlayerStatsComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
+{
+    Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
+
+    if (DeltaTime <= 0.0f || !bAllowStaminaRegen || IsDead())
+    {
+        return;
+    }
+
+    if (CurrentStamina >= MaxStamina || StaminaRegenPerSecond <= 0.0f)
+    {
+        return;
+    }
+
+    IncreaseStamina(StaminaRegenPerSecond * DeltaTime);
 }
 
 bool UPlayerStatsComponent::DecreaseHealth(float Damage)
@@ -44,6 +61,15 @@ bool UPlayerStatsComponent::DecreaseHealth(float Damage)
 
 bool UPlayerStatsComponent::ApplyIncomingDamage(float Damage, AActor* DamageCauser)
 {
+    FRPGDamageSpec DamageSpec;
+    DamageSpec.Damage = Damage;
+    DamageSpec.DamageCauser = DamageCauser;
+    return ApplyIncomingHit(DamageSpec);
+}
+
+bool UPlayerStatsComponent::ApplyIncomingHit(const FRPGDamageSpec& DamageSpec)
+{
+    const float Damage = DamageSpec.Damage;
     if (Damage <= 0.0f || IsDead())
     {
         return IsDead();
@@ -52,14 +78,18 @@ bool UPlayerStatsComponent::ApplyIncomingDamage(float Damage, AActor* DamageCaus
     if (UCombatStateComponent* CombatState = GetOwner() ? GetOwner()->FindComponentByClass<UCombatStateComponent>() : nullptr)
     {
         bool bPerfectParry = false;
-        if (CombatState->TryNegateIncomingDamage(DamageCauser, bPerfectParry))
+        if (CombatState->TryNegateIncomingDamage(DamageSpec, bPerfectParry))
         {
-            OnDamageNegated.Broadcast(DamageCauser);
+            UE_LOG(LogTemp, Log, TEXT("Damage negated: Target=%s Causer=%s PerfectParry=%s"), *GetNameSafe(GetOwner()), *GetNameSafe(DamageSpec.DamageCauser), bPerfectParry ? TEXT("true") : TEXT("false"));
+            OnDamageNegated.Broadcast(DamageSpec.DamageCauser);
             return false;
         }
     }
 
-    return DecreaseHealth(Damage);
+    const bool bDied = DecreaseHealth(Damage);
+    UE_LOG(LogTemp, Log, TEXT("Damage applied: Target=%s Causer=%s Damage=%.2f Health=%.2f/%.2f"), *GetNameSafe(GetOwner()), *GetNameSafe(DamageSpec.DamageCauser), Damage, CurrentHealth, MaxHealth);
+    OnHitReceived.Broadcast(DamageSpec, Damage, CurrentHealth, MaxHealth);
+    return bDied;
 }
 
 void UPlayerStatsComponent::IncreaseHealth(float HealthRegeneration)
@@ -180,5 +210,15 @@ void UPlayerStatsComponent::HandleOwnerAnyDamage(AActor* DamagedActor, float Dam
         return;
     }
 
-    ApplyIncomingDamage(Damage, DamageCauser);
+    FRPGDamageSpec DamageSpec;
+    DamageSpec.Damage = Damage;
+    DamageSpec.DamageCauser = DamageCauser;
+    DamageSpec.EventInstigator = InstigatedBy;
+    ApplyIncomingHit(DamageSpec);
 }
+
+
+
+
+
+

@@ -12,7 +12,10 @@ public class RPG_Game : ModuleRules
             "CoreUObject",
             "Engine",
             "InputCore",
-            "EnhancedInput"
+            "EnhancedInput",
+            "AIModule",
+            "MotionWarping"
         });
     }
 }
+

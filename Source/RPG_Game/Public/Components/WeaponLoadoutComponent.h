@@ -10,6 +10,7 @@ class UAttackSystemComponent;
 class UCharacterMovementComponent;
 class UEvasionComponent;
 class UAnimMontage;
+class ULocomotionComponent;
 class URPGCombatMovesetDataAsset;
 class URPGWeaponInstanceDataAsset;
 class URPGWeaponTypeDataAsset;
@@ -68,8 +69,10 @@ private:
     TWeakObjectPtr<UAttackSystemComponent> CachedAttackSystem;
     TWeakObjectPtr<UEvasionComponent> CachedEvasion;
     TWeakObjectPtr<UCharacterMovementComponent> CachedMoveComp;
+    TWeakObjectPtr<ULocomotionComponent> CachedLocomotion;
 
     TObjectPtr<URPGCombatMovesetDataAsset> DefaultAttackMoveset = nullptr;
+    TObjectPtr<URPGCombatMovesetDataAsset> UnarmedAttackMoveset = nullptr;
     FRPGEvasionDirectionalMontages DefaultDodgeDirectionalMontages;
     TObjectPtr<UAnimMontage> DefaultDodgeMontage = nullptr;
     bool bDefaultUseDirectionalDodgeMontages = true;
@@ -85,3 +88,4 @@ private:
     void ApplyWalkSpeedMultiplier(float InWalkSpeedMultiplier);
     void BroadcastWeaponAnimationChanges();
 };
+
