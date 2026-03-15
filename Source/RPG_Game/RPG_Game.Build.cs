@@ -14,8 +14,10 @@ public class RPG_Game : ModuleRules
             "InputCore",
             "EnhancedInput",
             "AIModule",
-            "MotionWarping"
+            "MotionWarping",
+            "UMG",
+            "Slate",
+            "SlateCore"
         });
     }
 }
-

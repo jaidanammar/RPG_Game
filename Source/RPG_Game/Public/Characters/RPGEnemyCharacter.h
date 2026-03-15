@@ -7,6 +7,7 @@
 class UAnimationAsset;
 class UAttackSystemComponent;
 class UCombatStateComponent;
+class UEnemyCombatDisplayComponent;
 class UHostileEnemyComponent;
 class ULocomotionComponent;
 class UPlayerStatsComponent;
@@ -46,6 +47,9 @@ public:
 
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
     TObjectPtr<UHostileEnemyComponent> HostileEnemyComponent;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+    TObjectPtr<UEnemyCombatDisplayComponent> EnemyCombatDisplayComponent;
 
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat")
     TObjectPtr<USceneComponent> WeaponTraceStart;

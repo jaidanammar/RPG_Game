@@ -37,46 +37,94 @@ public:
     float MinFacingDotToAttack = 0.8f;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Enemy|Combat", meta = (ClampMin = "0.0", ClampMax = "1.0"))
-    float BaseAttackChance = 0.4f;
+    float BaseAttackChance = 0.58f;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Enemy|Combat", meta = (ClampMin = "0.0", ClampMax = "1.0"))
-    float PunishAttackChance = 0.85f;
+    float PunishAttackChance = 0.96f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Enemy|Combat", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+    float PressureAttackChanceBonus = 0.12f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Enemy|Combat", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+    float CloseRangeAttackChanceBonus = 0.08f;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Enemy|Combat", meta = (ClampMin = "0.05"))
-    float MinDecisionInterval = 0.18f;
+    float MinDecisionInterval = 0.14f;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Enemy|Combat", meta = (ClampMin = "0.05"))
-    float MaxDecisionInterval = 0.4f;
+    float MaxDecisionInterval = 0.28f;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Enemy|Combat", meta = (ClampMin = "50.0"))
     float ThreatGuardRange = 220.0f;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Enemy|Combat", meta = (ClampMin = "0.0", ClampMax = "1.0"))
-    float GuardAgainstAttackChance = 0.8f;
+    float GuardAgainstAttackChance = 0.72f;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Enemy|Combat", meta = (ClampMin = "0.05"))
-    float MinGuardHoldDuration = 0.25f;
+    float MinGuardHoldDuration = 0.18f;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Enemy|Combat", meta = (ClampMin = "0.05"))
-    float MaxGuardHoldDuration = 0.6f;
+    float MaxGuardHoldDuration = 0.4f;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Enemy|Combat", meta = (ClampMin = "0.05"))
-    float PostGuardAttackDelay = 0.2f;
+    float PostGuardAttackDelay = 0.12f;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Enemy|Movement", meta = (ClampMin = "50.0"))
-    float ChaseStopDistance = 140.0f;
+    float ChaseStopDistance = 150.0f;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Enemy|Movement", meta = (ClampMin = "50.0"))
-    float PreferredCombatDistance = 150.0f;
+    float PreferredCombatDistance = 125.0f;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Enemy|Movement", meta = (ClampMin = "0.0"))
-    float RetreatDistance = 110.0f;
+    float CombatDistanceTolerance = 22.0f;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Enemy|Movement", meta = (ClampMin = "0.0"))
-    float RetreatDuration = 0.45f;
+    float RetreatDistance = 90.0f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Enemy|Movement", meta = (ClampMin = "0.0"))
+    float RetreatDuration = 0.22f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Enemy|Movement", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+    float StrafeWeight = 0.18f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Enemy|Movement", meta = (ClampMin = "0.05"))
+    float MinStrafeSwitchInterval = 0.4f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Enemy|Movement", meta = (ClampMin = "0.05"))
+    float MaxStrafeSwitchInterval = 0.9f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Enemy|Movement", meta = (ClampMin = "0.0"))
+    float AdvanceCommitDuration = 0.45f;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Enemy|Movement", meta = (ClampMin = "0.1"))
     float FaceTargetInterpSpeed = 8.0f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Enemy|Behavior", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+    float FeintChance = 0.06f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Enemy|Behavior", meta = (ClampMin = "0.05"))
+    float MinFeintDuration = 0.12f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Enemy|Behavior", meta = (ClampMin = "0.05"))
+    float MaxFeintDuration = 0.22f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Enemy|Behavior", meta = (ClampMin = "0.0"))
+    float HesitationAfterTakingHit = 0.2f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Enemy|Behavior", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+    float DamageNervesPenalty = 0.08f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Enemy|Behavior", meta = (ClampMin = "0.0"))
+    float RecentDamagePenaltyDuration = 0.45f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Enemy|Behavior", meta = (ClampMin = "0.0"))
+    float PressureBuildPerSecond = 0.34f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Enemy|Behavior", meta = (ClampMin = "0.0"))
+    float PressureDecayPerSecond = 0.08f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Enemy|Behavior", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+    float MaxPressureBonus = 0.32f;
 
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Enemy|State")
     bool bIsHostile = false;
@@ -104,7 +152,14 @@ private:
     double NextDecisionTime = 0.0;
     double GuardReleaseTime = 0.0;
     double RetreatEndTime = 0.0;
+    double FeintEndTime = 0.0;
+    double HesitationEndTime = 0.0;
+    double RecentDamageTime = -100.0;
+    double NextStrafeSwapTime = 0.0;
+    double AdvanceCommitEndTime = 0.0;
     ERPGCombatState LastObservedTargetState = ERPGCombatState::Idle;
+    int32 StrafeDirectionSign = 1;
+    float AttackPressure = 0.0f;
 
     UFUNCTION()
     void HandleOwnerHitReceived(FRPGDamageSpec DamageSpec, float DamageApplied, float NewHealth, float MaxHealth);
@@ -118,4 +173,7 @@ private:
     bool ShouldPunishTarget(ERPGCombatState TargetState, float DistanceToTarget) const;
     void StartRetreat(double WorldTime);
     float GetNextDecisionDelay() const;
+    float GetAttackChance(bool bIsPunishWindow, float DistanceToTarget, double WorldTime) const;
+    FVector GetStrafeDirection(const FVector& DirectionToTarget, double WorldTime);
+    bool IsHesitating(double WorldTime) const;
 };

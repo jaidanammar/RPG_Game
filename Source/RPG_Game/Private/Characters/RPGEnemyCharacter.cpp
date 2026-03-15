@@ -6,6 +6,7 @@
 #include "Components/AttackSystemComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/CombatStateComponent.h"
+#include "Components/EnemyCombatDisplayComponent.h"
 #include "Components/HostileEnemyComponent.h"
 #include "Components/LocomotionComponent.h"
 #include "Components/PlayerStatsComponent.h"
@@ -32,6 +33,7 @@ ARPGEnemyCharacter::ARPGEnemyCharacter()
     TargetLockComponent = CreateDefaultSubobject<UTargetLockComponent>(TEXT("TargetLockComponent"));
     WeaponLoadoutComponent = CreateDefaultSubobject<UWeaponLoadoutComponent>(TEXT("WeaponLoadoutComponent"));
     HostileEnemyComponent = CreateDefaultSubobject<UHostileEnemyComponent>(TEXT("HostileEnemyComponent"));
+    EnemyCombatDisplayComponent = CreateDefaultSubobject<UEnemyCombatDisplayComponent>(TEXT("EnemyCombatDisplayComponent"));
 
     WeaponTraceStart = CreateDefaultSubobject<USceneComponent>(TEXT("WeaponTraceStart"));
     WeaponTraceStart->SetupAttachment(GetMesh());
