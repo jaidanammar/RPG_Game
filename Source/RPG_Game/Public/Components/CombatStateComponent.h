@@ -28,6 +28,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnParryWindowChanged, bool, bIsActi
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnParrySuccess, AActor*, AttackerActor, bool, bIsPerfectParry);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnParryFailed);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnHitReactionUpdated, ERPGHitReactionStrength, ReactionStrength, ERPGHitDirection, HitDirection);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnParried, bool, bIsPerfectParry);
 
 UCLASS(ClassGroup=(RPG), BlueprintType, Blueprintable, meta=(BlueprintSpawnableComponent))
 class RPG_GAME_API UCombatStateComponent : public UActorComponent
@@ -83,10 +84,10 @@ public:
     bool bAllowParry = true;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CombatState|Parry", meta=(ClampMin="0.01"))
-    float ParryWindowDuration = 0.15f;
+    float ParryWindowDuration = 0.28f;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CombatState|Parry", meta=(ClampMin="0.0"))
-    float PerfectParryWindowDuration = 0.06f;
+    float PerfectParryWindowDuration = 0.12f;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CombatState|Parry", meta=(ClampMin="0.0"))
     float ParryCooldown = 0.3f;
@@ -98,10 +99,19 @@ public:
     float ParryFailStaminaCost = 4.0f;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CombatState|Parry")
+    bool bDealParryCounterDamage = true;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CombatState|Parry", meta=(ClampMin="0.0"))
+    float ParryCounterDamage = 12.0f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CombatState|Parry", meta=(ClampMin="1.0"))
+    float PerfectParryCounterDamageMultiplier = 1.5f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CombatState|Parry")
     bool bEnterGuardStateOnParrySuccess = false;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CombatState|Parry")
-    bool bBeginParryOnGuardPressed = false;
+    bool bBeginParryOnGuardPressed = true;
 
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CombatState|Parry")
     bool bParryWindowActive = false;
@@ -117,6 +127,12 @@ public:
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CombatState|Hitstun")
     bool bGuardPreventsHitstun = true;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CombatState|Hitstun")
+    bool bDisableMontageRootMotionDuringHitstun = true;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CombatState|Hitstun")
+    bool bLockHorizontalPositionDuringHitstun = true;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CombatState|Guard", meta=(ClampMin="0.0", ClampMax="1.0"))
     float GuardChipDamageMultiplier = 0.1f;
@@ -148,6 +164,8 @@ public:
     UPROPERTY(BlueprintAssignable, Category = "CombatState|Events")
     FOnHitReactionUpdated OnHitReactionUpdated;
 
+    UPROPERTY(BlueprintAssignable, Category = "CombatState|Events")
+    FOnParried OnParried;
     UFUNCTION(BlueprintPure, Category = "CombatState")
     ERPGCombatState GetCombatState() const { return CurrentState; }
 
@@ -202,6 +220,10 @@ private:
     float GuardDrainAccumulator = 0.0f;
     float SavedGuardWalkSpeed = 0.0f;
     bool bGuardWalkSpeedOverrideActive = false;
+    uint8 SavedHitstunRootMotionMode = 0;
+    bool bHitstunRootMotionOverrideActive = false;
+    FVector HitstunAnchorLocation = FVector::ZeroVector;
+
     bool bGuardInputHeld = false;
     double PerfectParryWindowEndTime = 0.0;
 
@@ -211,6 +233,9 @@ private:
     UFUNCTION()
     void HandleOwnerHitReceived(FRPGDamageSpec DamageSpec, float DamageApplied, float NewHealth, float MaxHealth);
 
+    void ApplyAnimRootMotionOverrideForHitstun();
+    void RestoreAnimRootMotionOverrideForHitstun();
+
     void EndHitstun();
     void TickGuardStamina(float DeltaTime);
     bool HasGuardStamina() const;
@@ -219,6 +244,11 @@ private:
     void EndParryWindow(bool bBroadcastFail);
     void EndParryCooldown();
 };
+
+
+
+
+
 
 
 

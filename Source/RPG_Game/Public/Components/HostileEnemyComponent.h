@@ -2,14 +2,16 @@
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
+#include "Components/AttackSystemComponent.h"
 #include "Components/CombatStateComponent.h"
+#include "Components/EvasionComponent.h"
 #include "Data/RPGCombatTypes.h"
 #include "HostileEnemyComponent.generated.h"
 
 class AActor;
 class ACharacter;
-class UAttackSystemComponent;
 class UCombatStateComponent;
+class UEvasionComponent;
 class UPlayerStatsComponent;
 class UTargetLockComponent;
 
@@ -26,6 +28,9 @@ public:
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Enemy|Aggro")
     bool bFaceTargetWhileHostile = true;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Enemy|Aggro")
+    bool bMaintainFocusLockWhileHostile = true;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Enemy|Combat", meta = (ClampMin = "50.0"))
     float AttackRange = 180.0f;
@@ -69,6 +74,15 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Enemy|Combat", meta = (ClampMin = "0.05"))
     float PostGuardAttackDelay = 0.12f;
 
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Enemy|Combat", meta = (ClampMin = "0.0"))
+    float PostAttackDecisionDelay = 0.28f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Enemy|Combat", meta = (ClampMin = "50.0"))
+    float ThreatEvadeRange = 165.0f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Enemy|Combat", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+    float EvadeAgainstAttackChance = 0.18f;
+
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Enemy|Movement", meta = (ClampMin = "50.0"))
     float ChaseStopDistance = 150.0f;
 
@@ -82,10 +96,16 @@ public:
     float RetreatDistance = 90.0f;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Enemy|Movement", meta = (ClampMin = "0.0"))
+    float PersonalSpaceDistance = 82.0f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Enemy|Movement", meta = (ClampMin = "0.0"))
     float RetreatDuration = 0.22f;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Enemy|Movement", meta = (ClampMin = "0.0", ClampMax = "1.0"))
     float StrafeWeight = 0.18f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Enemy|Movement", meta = (ClampMin = "0.0"))
+    float PersonalSpaceStrafeMultiplier = 1.5f;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Enemy|Movement", meta = (ClampMin = "0.05"))
     float MinStrafeSwitchInterval = 0.4f;
@@ -126,6 +146,27 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Enemy|Behavior", meta = (ClampMin = "0.0", ClampMax = "1.0"))
     float MaxPressureBonus = 0.32f;
 
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Enemy|Behavior", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+    float HeavyAttackChance = 0.14f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Enemy|Behavior", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+    float PunishHeavyAttackChance = 0.28f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Enemy|Behavior", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+    float ComboFollowUpChance = 0.24f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Enemy|Behavior", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+    float PunishComboFollowUpChance = 0.46f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Enemy|Behavior", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+    float ParryAgainstAttackChance = 0.12f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Enemy|Behavior", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+    float GuardParryChance = 0.18f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Enemy|Behavior", meta = (ClampMin = "50.0"))
+    float ParryThreatRange = 175.0f;
+
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Enemy|State")
     bool bIsHostile = false;
 
@@ -146,34 +187,58 @@ private:
     TWeakObjectPtr<ACharacter> CachedCharacter;
     TWeakObjectPtr<UAttackSystemComponent> CachedAttackSystem;
     TWeakObjectPtr<UCombatStateComponent> CachedCombatState;
+    TWeakObjectPtr<UEvasionComponent> CachedEvasion;
     TWeakObjectPtr<UPlayerStatsComponent> CachedStats;
     TWeakObjectPtr<UTargetLockComponent> CachedTargetLock;
     double NextAttackTime = 0.0;
     double NextDecisionTime = 0.0;
+    double NextDefenseDecisionTime = 0.0;
     double GuardReleaseTime = 0.0;
     double RetreatEndTime = 0.0;
     double FeintEndTime = 0.0;
     double HesitationEndTime = 0.0;
     double RecentDamageTime = -100.0;
+    double DefensiveUrgencyEndTime = 0.0;
     double NextStrafeSwapTime = 0.0;
     double AdvanceCommitEndTime = 0.0;
+    double QueuedComboBufferTime = 0.0;
     ERPGCombatState LastObservedTargetState = ERPGCombatState::Idle;
+    ERPGAttackInputType QueuedComboInputType = ERPGAttackInputType::Light;
+    ERPGAttackInputType LastAttackInputType = ERPGAttackInputType::Light;
     int32 StrafeDirectionSign = 1;
+    int32 RepeatedAttackInputCount = 0;
     float AttackPressure = 0.0f;
+    bool bForceDefensiveEvasion = false;
+    bool bComboFollowUpQueued = false;
+    bool bWasAttackingLastTick = false;
 
     UFUNCTION()
     void HandleOwnerHitReceived(FRPGDamageSpec DamageSpec, float DamageApplied, float NewHealth, float MaxHealth);
+
+    UFUNCTION()
+    void HandleOwnerEvasionFailed(ERPGEvasionType EvasionType, FString Reason);
 
     void UpdateHostileBehavior(float DeltaTime);
     bool CanAttackTarget() const;
     bool IsFacingTarget(const FVector& DirectionToTarget) const;
     bool IsTargetValid(AActor* TargetActor) const;
+    void RefreshFocusLockTarget(AActor* TargetActor);
+    bool TryStartParryAgainstTargetState(ERPGCombatState TargetState, float DistanceToTarget, double WorldTime);
     bool TryStartGuardAgainstTargetState(ERPGCombatState TargetState, float DistanceToTarget, double WorldTime);
+    bool TryStartDefensiveEvasion(ERPGCombatState TargetState, const FVector& DirectionToTarget, const FVector& StrafeDirection, float DistanceToTarget, double WorldTime);
     void StopGuardIfNeeded(bool bThreatActive, double WorldTime);
     bool ShouldPunishTarget(ERPGCombatState TargetState, float DistanceToTarget) const;
     void StartRetreat(double WorldTime);
     float GetNextDecisionDelay() const;
+    float GetNextDefenseDecisionDelay() const;
     float GetAttackChance(bool bIsPunishWindow, float DistanceToTarget, double WorldTime) const;
     FVector GetStrafeDirection(const FVector& DirectionToTarget, double WorldTime);
+    bool HasUsableAttackInputType(ERPGAttackInputType InputType) const;
+    ERPGAttackInputType ChooseAttackInputType(bool bIsPunishWindow, float DistanceToTarget);
+    void QueueComboFollowUp(bool bIsPunishWindow, float DistanceToTarget, double WorldTime);
+    void ClearQueuedComboFollowUp();
     bool IsHesitating(double WorldTime) const;
+    bool ShouldPreferGuardDefense() const;
+    bool ShouldPreferEvasionDefense() const;
+    void DebugDefenseEvent(const FString& Message) const;
 };

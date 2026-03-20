@@ -1,7 +1,11 @@
 #include "Components/CombatStateComponent.h"
 
+#include "Components/AttackSystemComponent.h"
 #include "Components/PlayerStatsComponent.h"
+#include "Components/EvasionComponent.h"
 #include "Components/LocomotionComponent.h"
+#include "Animation/AnimInstance.h"
+#include "Components/SkeletalMeshComponent.h"
 #include "Engine/World.h"
 #include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
@@ -54,6 +58,7 @@ void UCombatStateComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
     }
 
     bParryOnCooldown = false;
+    RestoreAnimRootMotionOverrideForHitstun();
     RestoreGuardMovementPolicy();
     Super::EndPlay(EndPlayReason);
 }
@@ -75,6 +80,17 @@ void UCombatStateComponent::TickComponent(float DeltaTime, ELevelTick TickType, 
         TickGuardStamina(DeltaTime);
     }
 
+    if (CurrentState == ERPGCombatState::Hitstun && CachedMoveComp.IsValid())
+    {
+        const FVector CurrentVelocity = CachedMoveComp->Velocity;
+        CachedMoveComp->Velocity = FVector(0.0f, 0.0f, CurrentVelocity.Z);
+
+        if (bLockHorizontalPositionDuringHitstun && GetOwner() && CachedMoveComp->IsMovingOnGround())
+        {
+            const FVector OwnerLocation = GetOwner()->GetActorLocation();
+            GetOwner()->SetActorLocation(FVector(HitstunAnchorLocation.X, HitstunAnchorLocation.Y, OwnerLocation.Z));
+        }
+    }
     if (!bGuardInputHeld && CurrentState == ERPGCombatState::Guard)
     {
         StopGuard();
@@ -205,7 +221,13 @@ bool UCombatStateComponent::RequestState(ERPGCombatState NewState, bool bForce)
 
 bool UCombatStateComponent::StartGuard()
 {
+    const bool bWasGuardInputHeld = bGuardInputHeld;
     bGuardInputHeld = true;
+
+    if (bBeginParryOnGuardPressed && !bWasGuardInputHeld)
+    {
+        BeginParryAttempt();
+    }
 
     if (!bAllowGuardState)
     {
@@ -234,6 +256,7 @@ bool UCombatStateComponent::StartGuard()
 bool UCombatStateComponent::StopGuard()
 {
     bGuardInputHeld = false;
+    EndParryWindow(false);
 
     if (CurrentState != ERPGCombatState::Guard)
     {
@@ -250,20 +273,11 @@ bool UCombatStateComponent::StopGuard()
 
 void UCombatStateComponent::HandleGuardPressed()
 {
-    bGuardInputHeld = true;
-
-    if (bBeginParryOnGuardPressed)
-    {
-        BeginParryAttempt();
-    }
-
     StartGuard();
 }
 
 void UCombatStateComponent::HandleGuardReleased()
 {
-    bGuardInputHeld = false;
-    EndParryWindow(false);
     StopGuard();
 }
 
@@ -317,6 +331,61 @@ bool UCombatStateComponent::TryNegateIncomingDamage(const FRPGDamageSpec& Damage
 {
     bOutPerfectParry = false;
 
+    if (CurrentState == ERPGCombatState::Hitstun)
+    {
+        return false;
+    }
+
+    if (DamageSpec.bCanBeParried && bParryWindowActive)
+    {
+        const double WorldTime = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0;
+        bOutPerfectParry = WorldTime <= PerfectParryWindowEndTime;
+
+        EndParryWindow(false);
+
+        bParryOnCooldown = true;
+        if (GetWorld())
+        {
+            const float Cooldown = FMath::Max(ParryCooldown, 0.01f);
+            GetWorld()->GetTimerManager().ClearTimer(ParryCooldownTimerHandle);
+            GetWorld()->GetTimerManager().SetTimer(ParryCooldownTimerHandle, this, &UCombatStateComponent::EndParryCooldown, Cooldown, false);
+        }
+
+        const float AttackerHitstunDuration = bOutPerfectParry ? 0.4f : 0.25f;
+        if (bDealParryCounterDamage && ParryCounterDamage > 0.0f)
+        {
+            if (UAttackSystemComponent* AttackSystem = GetOwner() ? GetOwner()->FindComponentByClass<UAttackSystemComponent>() : nullptr)
+            {
+                FRPGDamageSpec CounterDamageSpec;
+                CounterDamageSpec.Damage = ParryCounterDamage * (bOutPerfectParry ? PerfectParryCounterDamageMultiplier : 1.0f);
+                CounterDamageSpec.HitstunDuration = AttackerHitstunDuration;
+                CounterDamageSpec.ReactionStrength = bOutPerfectParry ? ERPGHitReactionStrength::Heavy : ERPGHitReactionStrength::Light;
+                CounterDamageSpec.bCanBeBlocked = false;
+                CounterDamageSpec.bCanBeParried = false;
+                CounterDamageSpec.DamageCauser = GetOwner();
+                if (const ACharacter* OwnerCharacter = Cast<ACharacter>(GetOwner()))
+                {
+                    CounterDamageSpec.EventInstigator = OwnerCharacter->GetController();
+                }
+                AttackSystem->PrimeTraceDamageSpec(CounterDamageSpec);
+            }
+        }
+
+        if (UCombatStateComponent* AttackerCombatState = DamageSpec.DamageCauser ? DamageSpec.DamageCauser->FindComponentByClass<UCombatStateComponent>() : nullptr)
+        {
+            AttackerCombatState->ApplyHitstun(AttackerHitstunDuration);
+            AttackerCombatState->OnParried.Broadcast(bOutPerfectParry);
+        }
+
+        if (bEnterGuardStateOnParrySuccess && bGuardInputHeld)
+        {
+            RequestState(ERPGCombatState::Guard, true);
+        }
+
+        OnParrySuccess.Broadcast(DamageSpec.DamageCauser, bOutPerfectParry);
+        return true;
+    }
+
     if (CurrentState == ERPGCombatState::Guard && DamageSpec.bCanBeBlocked)
     {
         if (CachedStats.IsValid())
@@ -340,31 +409,7 @@ bool UCombatStateComponent::TryNegateIncomingDamage(const FRPGDamageSpec& Damage
         return true;
     }
 
-    if (!DamageSpec.bCanBeParried || !bParryWindowActive)
-    {
-        return false;
-    }
-
-    const double WorldTime = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0;
-    bOutPerfectParry = WorldTime <= PerfectParryWindowEndTime;
-
-    EndParryWindow(false);
-
-    bParryOnCooldown = true;
-    if (GetWorld())
-    {
-        const float Cooldown = FMath::Max(ParryCooldown, 0.01f);
-        GetWorld()->GetTimerManager().ClearTimer(ParryCooldownTimerHandle);
-        GetWorld()->GetTimerManager().SetTimer(ParryCooldownTimerHandle, this, &UCombatStateComponent::EndParryCooldown, Cooldown, false);
-    }
-
-    if (bEnterGuardStateOnParrySuccess && bGuardInputHeld)
-    {
-        RequestState(ERPGCombatState::Guard, true);
-    }
-
-    OnParrySuccess.Broadcast(DamageSpec.DamageCauser, bOutPerfectParry);
-    return true;
+    return false;
 }
 
 bool UCombatStateComponent::ApplyHitstun(float Duration)
@@ -390,6 +435,19 @@ bool UCombatStateComponent::ApplyHitstun(float Duration)
         return false;
     }
 
+    bGuardInputHeld = false;
+    EndParryWindow(false);
+    RestoreGuardMovementPolicy();
+
+    HitstunAnchorLocation = GetOwner() ? GetOwner()->GetActorLocation() : FVector::ZeroVector;
+
+    if (UEvasionComponent* EvasionComponent = GetOwner() ? GetOwner()->FindComponentByClass<UEvasionComponent>() : nullptr)
+    {
+        EvasionComponent->CancelActiveInvulnerability();
+    }
+
+    ApplyAnimRootMotionOverrideForHitstun();
+
     if (GetWorld())
     {
         GetWorld()->GetTimerManager().ClearTimer(HitstunTimerHandle);
@@ -402,6 +460,7 @@ bool UCombatStateComponent::ApplyHitstun(float Duration)
 void UCombatStateComponent::HandleOwnerDeath()
 {
     EndParryWindow(false);
+    RestoreAnimRootMotionOverrideForHitstun();
     RequestState(ERPGCombatState::Dead, true);
 }
 
@@ -426,6 +485,7 @@ void UCombatStateComponent::EndHitstun()
     {
         RequestState(ERPGCombatState::Idle, true);
     }
+    RestoreAnimRootMotionOverrideForHitstun();
 }
 
 void UCombatStateComponent::TickGuardStamina(float DeltaTime)
@@ -577,6 +637,56 @@ void UCombatStateComponent::EndParryCooldown()
         GetWorld()->GetTimerManager().ClearTimer(ParryCooldownTimerHandle);
     }
 }
+
+
+
+
+
+
+
+void UCombatStateComponent::ApplyAnimRootMotionOverrideForHitstun()
+{
+    if (!bDisableMontageRootMotionDuringHitstun || bHitstunRootMotionOverrideActive)
+    {
+        return;
+    }
+
+    ACharacter* OwnerCharacter = Cast<ACharacter>(GetOwner());
+    if (!OwnerCharacter || !OwnerCharacter->GetMesh())
+    {
+        return;
+    }
+
+    if (UAnimInstance* AnimInstance = OwnerCharacter->GetMesh()->GetAnimInstance())
+    {
+        SavedHitstunRootMotionMode = static_cast<uint8>(AnimInstance->RootMotionMode);
+        AnimInstance->SetRootMotionMode(ERootMotionMode::NoRootMotionExtraction);
+        bHitstunRootMotionOverrideActive = true;
+    }
+}
+
+void UCombatStateComponent::RestoreAnimRootMotionOverrideForHitstun()
+{
+    if (!bHitstunRootMotionOverrideActive)
+    {
+        return;
+    }
+
+    ACharacter* OwnerCharacter = Cast<ACharacter>(GetOwner());
+    if (!OwnerCharacter || !OwnerCharacter->GetMesh())
+    {
+        bHitstunRootMotionOverrideActive = false;
+        return;
+    }
+
+    if (UAnimInstance* AnimInstance = OwnerCharacter->GetMesh()->GetAnimInstance())
+    {
+        AnimInstance->SetRootMotionMode(static_cast<ERootMotionMode::Type>(SavedHitstunRootMotionMode));
+    }
+
+    bHitstunRootMotionOverrideActive = false;
+}
+
 
 
 

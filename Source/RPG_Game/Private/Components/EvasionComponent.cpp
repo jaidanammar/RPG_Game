@@ -250,7 +250,8 @@ bool UEvasionComponent::ConsumeStamina(float Cost)
         return false;
     }
 
-    return !CachedStats->DecreaseStamina(Cost);
+    CachedStats->DecreaseStamina(Cost);
+    return true;
 }
 
 FVector UEvasionComponent::ResolveEvasionDirection() const
@@ -578,6 +579,22 @@ void UEvasionComponent::RestoreAnimRootMotionOverrideForEvasion()
     bAnimRootMotionOverrideActive = false;
 }
 
+void UEvasionComponent::CancelActiveInvulnerability()
+{
+    InvulnerabilityRefCount = 0;
+
+    if (GetWorld())
+    {
+        GetWorld()->GetTimerManager().ClearTimer(InvulnerabilityStartTimerHandle);
+        GetWorld()->GetTimerManager().ClearTimer(InvulnerabilityEndTimerHandle);
+    }
+
+    if (CachedStats.IsValid())
+    {
+        CachedStats->bIsInvulnerable = false;
+        OnInvulnerabilityChanged.Broadcast(false);
+    }
+}
 void UEvasionComponent::BeginInvulnerability()
 {
     ++InvulnerabilityRefCount;
@@ -629,6 +646,9 @@ void UEvasionComponent::BroadcastFail(ERPGEvasionType EvasionType, const FString
 {
     OnEvasionFailed.Broadcast(EvasionType, Reason);
 }
+
+
+
 
 
 

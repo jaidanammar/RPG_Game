@@ -60,6 +60,7 @@ FRPGEvasionDirectionalMontages MergeDirectionalMontages(
 
     return Result;
 }
+
 void MergeMissingAnimationSlots(FRPGWeaponAnimationSet& InOutTarget, const FRPGWeaponAnimationSet& Fallback)
 {
     for (uint8 SlotIndex = 0; SlotIndex < static_cast<uint8>(ERPGAnimationSlot::Count); ++SlotIndex)
@@ -109,6 +110,11 @@ void UWeaponLoadoutComponent::BeginPlay()
 
     if (EquippedWeaponInstance)
     {
+        if (!OwnedWeaponInstance)
+        {
+            OwnedWeaponInstance = EquippedWeaponInstance;
+        }
+
         const bool bEquipped = EquipWeaponInstance(EquippedWeaponInstance, true);
         UE_LOG(
             LogRPGWeaponLoadout,
@@ -152,6 +158,7 @@ bool UWeaponLoadoutComponent::EquipWeaponInstance(URPGWeaponInstanceDataAsset* N
 
     CacheCombatComponents();
 
+    OwnedWeaponInstance = NewWeaponInstance;
     EquippedWeaponInstance = NewWeaponInstance;
     ApplyTypeProfileInternal(NewWeaponInstance->WeaponTypeProfile, bResetCombo);
 
@@ -177,6 +184,11 @@ bool UWeaponLoadoutComponent::EquipWeaponInstance(URPGWeaponInstanceDataAsset* N
         *StaticEnum<ERPGWeaponType>()->GetNameStringByValue(static_cast<int64>(ActiveWeaponType)));
 
     return true;
+}
+
+bool UWeaponLoadoutComponent::EquipOwnedWeapon(bool bResetCombo)
+{
+    return OwnedWeaponInstance ? EquipWeaponInstance(OwnedWeaponInstance, bResetCombo) : false;
 }
 
 bool UWeaponLoadoutComponent::UnequipWeapon(bool bResetCombo)
@@ -227,6 +239,11 @@ bool UWeaponLoadoutComponent::UnequipWeapon(bool bResetCombo)
     return true;
 }
 
+void UWeaponLoadoutComponent::SetOwnedWeaponInstance(URPGWeaponInstanceDataAsset* NewOwnedWeaponInstance)
+{
+    OwnedWeaponInstance = NewOwnedWeaponInstance;
+}
+
 bool UWeaponLoadoutComponent::ApplyWeaponTypeProfile(URPGWeaponTypeDataAsset* NewWeaponTypeProfile, bool bResetCombo)
 {
     if (!NewWeaponTypeProfile)
@@ -263,7 +280,7 @@ void UWeaponLoadoutComponent::SetDefaultAnimationSet(const FRPGWeaponAnimationSe
     if (!EquippedWeaponInstance || !EquippedWeaponInstance->WeaponTypeProfile)
     {
         ActiveAnimationSet = DefaultAnimationSet;
-    NormalizeAnimationSet(ActiveAnimationSet);
+        NormalizeAnimationSet(ActiveAnimationSet);
         BroadcastWeaponAnimationChanges();
         return;
     }
@@ -411,7 +428,6 @@ void UWeaponLoadoutComponent::ApplyTypeProfileInternal(const URPGWeaponTypeDataA
         }
     }
 
-
     BroadcastWeaponAnimationChanges();
 }
 
@@ -465,4 +481,3 @@ void UWeaponLoadoutComponent::BroadcastWeaponAnimationChanges()
     OnWeaponProfileChanged.Broadcast(ActiveWeaponType);
     OnWeaponAnimationSetChanged.Broadcast(ActiveAnimationSet);
 }
-

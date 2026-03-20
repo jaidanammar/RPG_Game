@@ -208,6 +208,8 @@ public:
     UFUNCTION(BlueprintCallable, Category = "Evasion")
     void HandleCombatRollInput();
 
+    UFUNCTION(BlueprintCallable, Category = "Evasion")
+    void CancelActiveInvulnerability();
     UFUNCTION(BlueprintPure, Category = "Evasion")
     bool CanCombatRollByWeight() const;
 
@@ -278,6 +280,7 @@ private:
 
     void BroadcastFail(ERPGEvasionType EvasionType, const FString& Reason);
 };
+
 
 
 

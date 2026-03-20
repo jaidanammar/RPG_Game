@@ -236,6 +236,9 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Attack|Trace")
     bool bAutoManageWeaponTrace = true;
 
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Attack|Trace", meta=(ClampMin = "0.0", ClampMax = "0.25"))
+    float AutoManagedTraceStartupDelay = 0.08f;
+
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Attack|Trace")
     FName DefaultTraceStartComponentName = TEXT("WeaponTraceStart");
 
@@ -320,6 +323,12 @@ public:
     UFUNCTION(BlueprintCallable, Category = "Attack|Trace")
     void ResetHitActors();
 
+    UFUNCTION(BlueprintCallable, Category = "Attack|Trace")
+    void PrimeTraceDamageSpec(const FRPGDamageSpec& DamageSpec, bool bResetHits = true);
+
+    UFUNCTION(BlueprintCallable, Category = "Attack|Trace")
+    void ClearPrimedTraceDamageSpec();
+
     UFUNCTION(BlueprintPure, Category = "Attack")
     bool IsAttacking() const { return bIsAttacking; }
 
@@ -340,6 +349,7 @@ private:
     FTimerHandle ComboResetTimerHandle;
     FTimerHandle ComboBufferTimerHandle;
     FTimerHandle TraceTimerHandle;
+    FTimerHandle AutoManagedTraceStartTimerHandle;
 
     FTimerHandle PostAttackMovementLockTimerHandle;
     bool bTraceActive = false;
@@ -360,6 +370,8 @@ private:
     float PostAttackSpeedRecoveryElapsed = 0.0f;
     float PostAttackSpeedRecoveryStartSpeed = 0.0f;
     float PostAttackSpeedRecoveryTargetSpeed = 0.0f;
+    bool bPrimedTraceDamageSpecActive = false;
+    FRPGDamageSpec PrimedTraceDamageSpec;
     mutable TMap<ERPGAttackInputType, int32> LastRandomStartStageByType;
 
     void ApplyAttackMovesetInternal(const URPGCombatMovesetDataAsset* InMoveset);
@@ -390,7 +402,12 @@ private:
 
     UFUNCTION()
     void HandleStageMontageBlendingOut(UAnimMontage* Montage, bool bInterrupted);
+
+    UFUNCTION()
+    void HandleCombatStateChanged(ERPGCombatState OldState, ERPGCombatState NewState);
+
 };
+
 
 
 

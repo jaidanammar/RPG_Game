@@ -12,6 +12,10 @@ UAnimationAsset* FRPGWeaponAnimationSet::GetAnimationForSlot(ERPGAnimationSlot S
         return Run;
     case ERPGAnimationSlot::Sprint:
         return Sprint;
+    case ERPGAnimationSlot::FocusIdle:
+        return FocusIdle;
+    case ERPGAnimationSlot::FocusMove:
+        return FocusMove;
     case ERPGAnimationSlot::GuardIdle:
         return GuardIdle;
     case ERPGAnimationSlot::GuardMove:
@@ -36,6 +40,8 @@ UAnimationAsset* FRPGWeaponAnimationSet::GetAnimationForSlot(ERPGAnimationSlot S
         return GuardExit;
     case ERPGAnimationSlot::Parry:
         return Parry;
+    case ERPGAnimationSlot::Parried:
+        return Parried;
     case ERPGAnimationSlot::HitLightFront:
         return HitLightFront;
     case ERPGAnimationSlot::HitLightBack:
@@ -72,6 +78,12 @@ void FRPGWeaponAnimationSet::SetAnimationForSlot(ERPGAnimationSlot Slot, UAnimat
     case ERPGAnimationSlot::Sprint:
         Sprint = Animation;
         break;
+    case ERPGAnimationSlot::FocusIdle:
+        FocusIdle = Animation;
+        break;
+    case ERPGAnimationSlot::FocusMove:
+        FocusMove = Animation;
+        break;
     case ERPGAnimationSlot::GuardIdle:
         GuardIdle = Animation;
         break;
@@ -107,6 +119,9 @@ void FRPGWeaponAnimationSet::SetAnimationForSlot(ERPGAnimationSlot Slot, UAnimat
         break;
     case ERPGAnimationSlot::Parry:
         Parry = Animation;
+        break;
+    case ERPGAnimationSlot::Parried:
+        Parried = Animation;
         break;
     case ERPGAnimationSlot::HitLightFront:
         HitLightFront = Animation;
@@ -151,5 +166,36 @@ FRPGWeaponCombatTuning URPGWeaponInstanceDataAsset::ResolveFinalTuning() const
     return Result;
 }
 
+UStaticMesh* URPGWeaponInstanceDataAsset::ResolveEquippedMesh() const
+{
+    if (VisualDefinition.EquippedMesh)
+    {
+        return VisualDefinition.EquippedMesh;
+    }
 
+    return VisualDefinition.PickupMesh;
+}
 
+UStaticMesh* URPGWeaponInstanceDataAsset::ResolvePickupMesh() const
+{
+    if (VisualDefinition.PickupMesh)
+    {
+        return VisualDefinition.PickupMesh;
+    }
+
+    return VisualDefinition.EquippedMesh;
+}
+
+FName URPGWeaponInstanceDataAsset::ResolveEquippedSocketName() const
+{
+    return VisualDefinition.EquippedSocketName.IsNone()
+        ? FName(TEXT("hand_r"))
+        : VisualDefinition.EquippedSocketName;
+}
+
+FName URPGWeaponInstanceDataAsset::ResolveSheathedSocketName() const
+{
+    return VisualDefinition.SheathedSocketName.IsNone()
+        ? FName(TEXT("sheathe"))
+        : VisualDefinition.SheathedSocketName;
+}

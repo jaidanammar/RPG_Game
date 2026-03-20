@@ -29,6 +29,9 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Weapon")
     TObjectPtr<URPGWeaponInstanceDataAsset> EquippedWeaponInstance = nullptr;
 
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Weapon")
+    TObjectPtr<URPGWeaponInstanceDataAsset> OwnedWeaponInstance = nullptr;
+
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Weapon|Animation")
     FRPGWeaponAnimationSet DefaultAnimationSet;
 
@@ -48,13 +51,22 @@ public:
     bool EquipWeaponInstance(URPGWeaponInstanceDataAsset* NewWeaponInstance, bool bResetCombo = true);
 
     UFUNCTION(BlueprintCallable, Category = "Weapon")
+    bool EquipOwnedWeapon(bool bResetCombo = true);
+
+    UFUNCTION(BlueprintCallable, Category = "Weapon")
     bool UnequipWeapon(bool bResetCombo = true);
+
+    UFUNCTION(BlueprintCallable, Category = "Weapon")
+    void SetOwnedWeaponInstance(URPGWeaponInstanceDataAsset* NewOwnedWeaponInstance);
 
     UFUNCTION(BlueprintCallable, Category = "Weapon")
     bool ApplyWeaponTypeProfile(URPGWeaponTypeDataAsset* NewWeaponTypeProfile, bool bResetCombo = true);
 
     UFUNCTION(BlueprintCallable, Category = "Weapon|Animation")
     void SetDefaultAnimationSet(const FRPGWeaponAnimationSet& InDefaultAnimationSet);
+
+    UFUNCTION(BlueprintPure, Category = "Weapon")
+    bool HasOwnedWeapon() const { return OwnedWeaponInstance != nullptr; }
 
     UFUNCTION(BlueprintPure, Category = "Weapon|Animation")
     UAnimationAsset* ResolveAnimationForSlot(ERPGAnimationSlot Slot) const;
@@ -88,4 +100,3 @@ private:
     void ApplyWalkSpeedMultiplier(float InWalkSpeedMultiplier);
     void BroadcastWeaponAnimationChanges();
 };
-

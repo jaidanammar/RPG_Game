@@ -2,6 +2,7 @@
 
 #include "Components/CombatStateComponent.h"
 #include "GameFramework/Actor.h"
+#include "Engine/World.h"
 #include "Math/UnrealMathUtility.h"
 
 UPlayerStatsComponent::UPlayerStatsComponent()
@@ -19,6 +20,7 @@ void UPlayerStatsComponent::BeginPlay()
     }
 
     ClampStats();
+    StaminaRegenResumeTime = 0.0;
     BroadcastAllStats();
 }
 
@@ -36,14 +38,31 @@ void UPlayerStatsComponent::TickComponent(float DeltaTime, ELevelTick TickType, 
         return;
     }
 
+    if (const UWorld* World = GetWorld())
+    {
+        if (World->GetTimeSeconds() < StaminaRegenResumeTime)
+        {
+            return;
+        }
+    }
+
     IncreaseStamina(StaminaRegenPerSecond * DeltaTime);
 }
 
 bool UPlayerStatsComponent::DecreaseHealth(float Damage)
 {
-    if (Damage <= 0.0f || IsDead() || bIsInvulnerable)
+    if (Damage <= 0.0f || IsDead())
     {
         return IsDead();
+    }
+
+    if (bIsInvulnerable)
+    {
+        const UCombatStateComponent* CombatState = GetOwner() ? GetOwner()->FindComponentByClass<UCombatStateComponent>() : nullptr;
+        if (!CombatState || !CombatState->IsInState(ERPGCombatState::Hitstun))
+        {
+            return IsDead();
+        }
     }
 
     CurrentHealth = FMath::Clamp(CurrentHealth - Damage, 0.0f, MaxHealth);
@@ -123,6 +142,11 @@ bool UPlayerStatsComponent::DecreaseStamina(float StaminaDepletion)
     }
 
     CurrentStamina = FMath::Clamp(CurrentStamina - StaminaDepletion, 0.0f, MaxStamina);
+
+    if (const UWorld* World = GetWorld())
+    {
+        StaminaRegenResumeTime = World->GetTimeSeconds() + StaminaRegenDelayAfterUse;
+    }
     OnStaminaChanged.Broadcast(CurrentStamina, MaxStamina);
     return CurrentStamina <= 0.0f;
 }
@@ -216,6 +240,8 @@ void UPlayerStatsComponent::HandleOwnerAnyDamage(AActor* DamagedActor, float Dam
     DamageSpec.EventInstigator = InstigatedBy;
     ApplyIncomingHit(DamageSpec);
 }
+
+
 
 
 

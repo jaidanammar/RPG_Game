@@ -11,6 +11,7 @@ class UAnimSequenceBase;
 class UBlendSpace;
 class UCombatStateComponent;
 class UCharacterMovementComponent;
+class ULocomotionComponent;
 class UTargetLockComponent;
 class UWeaponLoadoutComponent;
 
@@ -22,6 +23,9 @@ class RPG_GAME_API URPGCharacterAnimInstance : public UAnimInstance
 public:
     virtual void NativeInitializeAnimation() override;
     virtual void NativeUpdateAnimation(float DeltaSeconds) override;
+
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Animation|Locomotion")
+    bool bUseFocusedLocomotionOverrides = true;
 
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Animation")
     float GroundSpeed = 0.0f;
@@ -84,6 +88,12 @@ public:
     TObjectPtr<UAnimationAsset> SprintAnimation = nullptr;
 
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Animation|Weapon")
+    TObjectPtr<UAnimationAsset> FocusIdleAnimation = nullptr;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Animation|Weapon")
+    TObjectPtr<UAnimationAsset> FocusMoveAnimation = nullptr;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Animation|Weapon")
     TObjectPtr<UAnimationAsset> GuardIdleAnimation = nullptr;
 
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Animation|Weapon")
@@ -120,6 +130,8 @@ public:
     TObjectPtr<UAnimationAsset> ParryAnimation = nullptr;
 
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Animation|Weapon")
+    TObjectPtr<UAnimationAsset> ParriedAnimation = nullptr;
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Animation|Weapon")
     TObjectPtr<UAnimationAsset> HitLightFrontAnimation = nullptr;
 
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Animation|Weapon")
@@ -151,6 +163,18 @@ public:
 
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Animation|Weapon|Typed")
     TObjectPtr<UBlendSpace> SprintBlendSpace = nullptr;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Animation|Locomotion")
+    TObjectPtr<UBlendSpace> DefaultLocomotionBlendSpace = nullptr;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Animation|Locomotion")
+    TObjectPtr<UBlendSpace> CurrentLocomotionBlendSpace = nullptr;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Animation|Weapon|Typed")
+    TObjectPtr<UAnimSequenceBase> FocusIdleSequence = nullptr;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Animation|Weapon|Typed")
+    TObjectPtr<UBlendSpace> FocusMoveBlendSpace = nullptr;
 
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Animation|Weapon|Typed")
     TObjectPtr<UAnimSequenceBase> GuardIdleSequence = nullptr;
@@ -189,6 +213,8 @@ public:
     TObjectPtr<UAnimSequenceBase> ParrySequence = nullptr;
 
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Animation|Weapon|Typed")
+    TObjectPtr<UAnimSequenceBase> ParriedSequence = nullptr;
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Animation|Weapon|Typed")
     TObjectPtr<UAnimSequenceBase> HitLightFrontSequence = nullptr;
 
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Animation|Weapon|Typed")
@@ -212,21 +238,56 @@ public:
     UFUNCTION(BlueprintPure, Category = "Animation|Weapon")
     UAnimationAsset* GetWeaponAnimationForSlot(ERPGAnimationSlot Slot) const;
 
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Animation|HitReaction")
+    bool bPlayHitReactions = true;
+
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Animation|HitReaction")
+    FName HitReactionSlotName = TEXT("DefaultSlot");
+
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Animation|HitReaction", meta = (ClampMin = "0.0"))
+    float HitReactionBlendInTime = 0.05f;
+
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Animation|HitReaction", meta = (ClampMin = "0.0"))
+    float HitReactionBlendOutTime = 0.1f;
+
     UFUNCTION(BlueprintCallable, Category = "Animation|Weapon")
     void ConsumeWeaponTransitionFlags();
 
 protected:
+    UFUNCTION()
+    void HandleHitReactionUpdated(ERPGHitReactionStrength ReactionStrength, ERPGHitDirection HitDirection);
+
+    UFUNCTION()
+    void HandleParrySuccess(AActor* AttackerActor, bool bIsPerfectParry);
+
+    UFUNCTION()
+    void HandleParried(bool bIsPerfectParry);
+    UAnimSequenceBase* ResolveHitReactionSequence(ERPGHitReactionStrength ReactionStrength, ERPGHitDirection HitDirection) const;
+
     void RefreshCachedComponents();
     void RefreshWeaponAnimationSlots();
     void QueueWeaponTransitionFlagConsumption();
 
     TWeakObjectPtr<ACharacter> CachedCharacter;
     TWeakObjectPtr<UCharacterMovementComponent> CachedMovementComponent;
+    TWeakObjectPtr<ULocomotionComponent> CachedLocomotionComponent;
     TWeakObjectPtr<UCombatStateComponent> CachedCombatState;
+    TWeakObjectPtr<UCombatStateComponent> BoundCombatState;
     TWeakObjectPtr<UTargetLockComponent> CachedTargetLock;
     TWeakObjectPtr<UWeaponLoadoutComponent> CachedWeaponLoadout;
     int32 WeaponTransitionConsumeFramesRemaining = 0;
 };
+
+
+
+
+
+
+
+
+
+
+
 
 
 

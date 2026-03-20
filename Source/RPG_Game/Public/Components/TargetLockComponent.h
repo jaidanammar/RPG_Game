@@ -6,6 +6,8 @@
 
 class AActor;
 class UCombatStateComponent;
+class ULocomotionComponent;
+class UPlayerStatsComponent;
 class UEvasionComponent;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnLockTargetChanged, AActor*, NewTarget);
@@ -60,6 +62,15 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "LockOn")
     bool bAutoRelockOnTargetLost = true;
 
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "LockOn|Movement")
+    bool bUseFocusedMovementStyle = true;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "LockOn|Movement", meta = (ClampMin = "0.1", ClampMax = "1.0"))
+    float FocusedMovementSpeedMultiplier = 0.88f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "LockOn|Movement")
+    bool bDisableSprintWhileLocked = false;
+
     UPROPERTY(BlueprintAssignable, Category = "LockOn|Events")
     FOnLockTargetChanged OnLockTargetChanged;
 
@@ -107,6 +118,8 @@ private:
     TWeakObjectPtr<AActor> CurrentTarget;
     TWeakObjectPtr<UCombatStateComponent> CachedCombatState;
     TWeakObjectPtr<UEvasionComponent> CachedEvasion;
+    TWeakObjectPtr<ULocomotionComponent> CachedLocomotion;
+    TWeakObjectPtr<UPlayerStatsComponent> BoundTargetStats;
 
     bool bMovementStrafeOverrideApplied = false;
     bool bSavedOrientRotationToMovement = false;
@@ -119,7 +132,12 @@ private:
     bool HasLineOfSightTo(AActor* Candidate) const;
     bool IsTargetDead(AActor* Candidate) const;
     void RefreshMovementFacingOverride();
+    UFUNCTION()
+    void HandleCurrentTargetDeath();
+
     void RotateOwnerTowardTarget(float DeltaTime);
     void UpdateControllerFacing(float DeltaTime);
 };
+
+
 

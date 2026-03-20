@@ -73,7 +73,14 @@ void UAttackSystemComponent::BeginPlay()
     {
         AttackStages.Add(FRPGAttackStage());
     }
+
+    if (CachedCombatState.IsValid())
+    {
+        CachedCombatState->OnCombatStateChanged.RemoveDynamic(this, &UAttackSystemComponent::HandleCombatStateChanged);
+        CachedCombatState->OnCombatStateChanged.AddDynamic(this, &UAttackSystemComponent::HandleCombatStateChanged);
+    }
 }
+
 
 void UAttackSystemComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
 {
@@ -366,7 +373,9 @@ void UAttackSystemComponent::StopCombo()
         GetWorld()->GetTimerManager().ClearTimer(ComboBufferTimerHandle);
     }
 
-    if (CachedCombatState.IsValid() && !CachedCombatState->IsInState(ERPGCombatState::Dead))
+    if (CachedCombatState.IsValid()
+        && !CachedCombatState->IsInState(ERPGCombatState::Dead)
+        && !CachedCombatState->IsInState(ERPGCombatState::Hitstun))
     {
         CachedCombatState->RequestState(ERPGCombatState::Idle);
     }
@@ -446,6 +455,8 @@ void UAttackSystemComponent::StopTrace()
 
     bTraceActive = false;
 
+    ClearPrimedTraceDamageSpec();
+
     if (bIsAttacking && CachedCombatState.IsValid() && !CachedCombatState->IsInState(ERPGCombatState::Dead))
     {
         CachedCombatState->RequestState(ERPGCombatState::AttackRecovery);
@@ -455,6 +466,23 @@ void UAttackSystemComponent::StopTrace()
 void UAttackSystemComponent::ResetHitActors()
 {
     HitActorsThisSwing.Reset();
+}
+
+void UAttackSystemComponent::PrimeTraceDamageSpec(const FRPGDamageSpec& DamageSpec, bool bResetHits)
+{
+    PrimedTraceDamageSpec = DamageSpec;
+    bPrimedTraceDamageSpecActive = true;
+
+    if (bResetHits)
+    {
+        ResetHitActors();
+    }
+}
+
+void UAttackSystemComponent::ClearPrimedTraceDamageSpec()
+{
+    bPrimedTraceDamageSpecActive = false;
+    PrimedTraceDamageSpec = FRPGDamageSpec();
 }
 
 bool UAttackSystemComponent::CanStartAttack() const
@@ -954,11 +982,22 @@ void UAttackSystemComponent::TickTrace()
 
 FRPGDamageSpec UAttackSystemComponent::BuildDamageSpec(const FHitResult& Hit) const
 {
-    FRPGDamageSpec DamageSpec;
-    DamageSpec.DamageCauser = GetOwner();
-    DamageSpec.EventInstigator = CachedCharacter.IsValid() ? CachedCharacter->GetController() : nullptr;
+    FRPGDamageSpec DamageSpec = bPrimedTraceDamageSpecActive ? PrimedTraceDamageSpec : FRPGDamageSpec();
+    if (!DamageSpec.DamageCauser)
+    {
+        DamageSpec.DamageCauser = GetOwner();
+    }
+    if (!DamageSpec.EventInstigator)
+    {
+        DamageSpec.EventInstigator = CachedCharacter.IsValid() ? CachedCharacter->GetController() : nullptr;
+    }
     DamageSpec.HitLocation = Hit.ImpactPoint;
     DamageSpec.HitDirection = ResolveHitDirectionAgainstActor(Hit.GetActor());
+
+    if (bPrimedTraceDamageSpecActive)
+    {
+        return DamageSpec;
+    }
 
     if (!AttackStages.IsValidIndex(AttackIndex))
     {
@@ -1235,3 +1274,17 @@ bool UAttackSystemComponent::HasMovementIntent() const
 
 
 
+
+
+void UAttackSystemComponent::HandleCombatStateChanged(ERPGCombatState OldState, ERPGCombatState NewState)
+{
+    if (!bIsAttacking)
+    {
+        return;
+    }
+
+    if (NewState == ERPGCombatState::Hitstun || NewState == ERPGCombatState::Dead)
+    {
+        StopCombo();
+    }
+}

@@ -44,6 +44,9 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Stats|Stamina", meta=(ClampMin="0.0"))
     float StaminaRegenPerSecond = 20.0f;
 
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Stats|Stamina", meta=(ClampMin="0.0"))
+    float StaminaRegenDelayAfterUse = 0.2f;
+
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Stats|Combat")
     bool bIsInvulnerable = false;
 
@@ -127,6 +130,7 @@ protected:
     virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 
 private:
+    double StaminaRegenResumeTime = 0.0;
     void ClampStats();
 
     UFUNCTION()

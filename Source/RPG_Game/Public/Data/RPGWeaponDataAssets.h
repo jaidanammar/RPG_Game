@@ -8,6 +8,7 @@
 
 class UAnimationAsset;
 class URPGLocomotionDataAsset;
+class UStaticMesh;
 
 UENUM(BlueprintType)
 enum class ERPGWeaponType : uint8
@@ -28,6 +29,8 @@ enum class ERPGAnimationSlot : uint8
     Walk UMETA(DisplayName = "Walk"),
     Run UMETA(DisplayName = "Run"),
     Sprint UMETA(DisplayName = "Sprint"),
+    FocusIdle UMETA(DisplayName = "Focus Idle"),
+    FocusMove UMETA(DisplayName = "Focus Move"),
     GuardIdle UMETA(DisplayName = "Guard Idle"),
     GuardMove UMETA(DisplayName = "Guard Move"),
     RunStart UMETA(DisplayName = "Run Start"),
@@ -40,6 +43,7 @@ enum class ERPGAnimationSlot : uint8
     GuardLoop UMETA(DisplayName = "Guard Loop"),
     GuardExit UMETA(DisplayName = "Guard Exit"),
     Parry UMETA(DisplayName = "Parry"),
+    Parried UMETA(DisplayName = "Parried"),
     HitLightFront UMETA(DisplayName = "Hit Light Front"),
     HitLightBack UMETA(DisplayName = "Hit Light Back"),
     HitHeavyFront UMETA(DisplayName = "Hit Heavy Front"),
@@ -66,6 +70,12 @@ struct FRPGWeaponAnimationSet
 
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon|Animation")
     TObjectPtr<UAnimationAsset> Sprint = nullptr;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon|Animation")
+    TObjectPtr<UAnimationAsset> FocusIdle = nullptr;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon|Animation")
+    TObjectPtr<UAnimationAsset> FocusMove = nullptr;
 
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon|Animation")
     TObjectPtr<UAnimationAsset> GuardIdle = nullptr;
@@ -102,6 +112,9 @@ struct FRPGWeaponAnimationSet
 
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon|Animation")
     TObjectPtr<UAnimationAsset> Parry = nullptr;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon|Animation")
+    TObjectPtr<UAnimationAsset> Parried = nullptr;
 
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon|Animation")
     TObjectPtr<UAnimationAsset> HitLightFront = nullptr;
@@ -144,6 +157,33 @@ struct FRPGWeaponCombatTuning
 
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon|Tuning", meta=(ClampMin="0.01"))
     float WalkSpeedMultiplier = 1.0f;
+};
+
+USTRUCT(BlueprintType)
+struct FRPGWeaponVisualDefinition
+{
+    GENERATED_BODY()
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon|Visual")
+    TObjectPtr<UStaticMesh> EquippedMesh = nullptr;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon|Visual")
+    FName EquippedSocketName = TEXT("hand_r");
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon|Visual")
+    FTransform EquippedRelativeTransform;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon|Visual")
+    FName SheathedSocketName = TEXT("sheathe");
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon|Visual")
+    FTransform SheathedRelativeTransform;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon|Visual")
+    TObjectPtr<UStaticMesh> PickupMesh = nullptr;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon|Visual")
+    FTransform PickupRelativeTransform;
 };
 
 UCLASS(BlueprintType)
@@ -213,6 +253,9 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon")
     FText DisplayName;
 
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon|Visual")
+    FRPGWeaponVisualDefinition VisualDefinition;
+
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon|Tuning", meta=(ClampMin="0.01"))
     float AttackDamageMultiplierBonus = 1.0f;
 
@@ -227,6 +270,16 @@ public:
 
     UFUNCTION(BlueprintPure, Category = "Weapon|Tuning")
     FRPGWeaponCombatTuning ResolveFinalTuning() const;
+
+    UFUNCTION(BlueprintPure, Category = "Weapon|Visual")
+    UStaticMesh* ResolveEquippedMesh() const;
+
+    UFUNCTION(BlueprintPure, Category = "Weapon|Visual")
+    UStaticMesh* ResolvePickupMesh() const;
+
+    UFUNCTION(BlueprintPure, Category = "Weapon|Visual")
+    FName ResolveEquippedSocketName() const;
+
+    UFUNCTION(BlueprintPure, Category = "Weapon|Visual")
+    FName ResolveSheathedSocketName() const;
 };
-
-

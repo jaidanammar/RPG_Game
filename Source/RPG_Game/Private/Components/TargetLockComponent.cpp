@@ -2,6 +2,7 @@
 
 #include "Components/CombatStateComponent.h"
 #include "Components/EvasionComponent.h"
+#include "Components/LocomotionComponent.h"
 #include "Components/PlayerStatsComponent.h"
 #include "Engine/OverlapResult.h"
 #include "Engine/World.h"
@@ -23,6 +24,7 @@ void UTargetLockComponent::BeginPlay()
 
     CachedCombatState = GetOwner() ? GetOwner()->FindComponentByClass<UCombatStateComponent>() : nullptr;
     CachedEvasion = GetOwner() ? GetOwner()->FindComponentByClass<UEvasionComponent>() : nullptr;
+    CachedLocomotion = GetOwner() ? GetOwner()->FindComponentByClass<ULocomotionComponent>() : nullptr;
     RefreshMovementFacingOverride();
 }
 
@@ -40,11 +42,7 @@ void UTargetLockComponent::TickComponent(float DeltaTime, ELevelTick TickType, F
     const bool bTargetNoLongerValid = !IsValidLockTarget(CurrentTarget.Get()) || IsTargetDead(CurrentTarget.Get());
     if (bTargetNoLongerValid)
     {
-        if (!bAutoRelockOnTargetLost || !LockBestTarget())
-        {
-            ClearLock();
-        }
-
+        HandleCurrentTargetDeath();
         return;
     }
 
@@ -83,8 +81,16 @@ bool UTargetLockComponent::LockBestTarget()
 
 void UTargetLockComponent::ClearLock()
 {
+    if (BoundTargetStats.IsValid())
+    {
+        BoundTargetStats->OnDeath.RemoveDynamic(this, &UTargetLockComponent::HandleCurrentTargetDeath);
+        BoundTargetStats = nullptr;
+    }
+
     if (!CurrentTarget.IsValid())
     {
+        RefreshMovementFacingOverride();
+        OnLockTargetChanged.Broadcast(nullptr);
         return;
     }
 
@@ -167,7 +173,21 @@ bool UTargetLockComponent::SetLockTarget(AActor* NewTarget)
         return false;
     }
 
+    if (BoundTargetStats.IsValid())
+    {
+        BoundTargetStats->OnDeath.RemoveDynamic(this, &UTargetLockComponent::HandleCurrentTargetDeath);
+        BoundTargetStats = nullptr;
+    }
+
     CurrentTarget = NewTarget;
+
+    if (UPlayerStatsComponent* TargetStats = NewTarget->FindComponentByClass<UPlayerStatsComponent>())
+    {
+        BoundTargetStats = TargetStats;
+        BoundTargetStats->OnDeath.RemoveDynamic(this, &UTargetLockComponent::HandleCurrentTargetDeath);
+        BoundTargetStats->OnDeath.AddDynamic(this, &UTargetLockComponent::HandleCurrentTargetDeath);
+    }
+
     RefreshMovementFacingOverride();
     OnLockTargetChanged.Broadcast(NewTarget);
     return true;
@@ -191,6 +211,7 @@ FVector UTargetLockComponent::GetLockTargetLocation() const
 bool UTargetLockComponent::ShouldUseStrafeLocomotion() const
 {
     const bool bIsGuarding = CachedCombatState.IsValid() && CachedCombatState->IsInState(ERPGCombatState::Guard);
+    const bool bHasFocusedTarget = CurrentTarget.IsValid();
     return CurrentTarget.IsValid() || bIsGuarding;
 }
 
@@ -202,10 +223,25 @@ float UTargetLockComponent::GetSignedForwardSpeed() const
         return 0.0f;
     }
 
+    const FVector Forward = OwnerActor->GetActorForwardVector().GetSafeNormal2D();
+    if (CurrentTarget.IsValid())
+    {
+        if (const ACharacter* CharacterOwner = Cast<ACharacter>(OwnerActor))
+        {
+            FVector InputVector = CharacterOwner->GetLastMovementInputVector();
+            InputVector.Z = 0.0f;
+            if (!InputVector.IsNearlyZero())
+            {
+                const float ReferenceSpeed = CharacterOwner->GetCharacterMovement()
+                    ? CharacterOwner->GetCharacterMovement()->MaxWalkSpeed
+                    : OwnerActor->GetVelocity().Size2D();
+                return FVector::DotProduct(InputVector.GetSafeNormal2D(), Forward) * ReferenceSpeed * FMath::Clamp(InputVector.Size2D(), 0.0f, 1.0f);
+            }
+        }
+    }
+
     FVector HorizontalVelocity = OwnerActor->GetVelocity();
     HorizontalVelocity.Z = 0.0f;
-
-    const FVector Forward = OwnerActor->GetActorForwardVector().GetSafeNormal2D();
     return FVector::DotProduct(HorizontalVelocity, Forward);
 }
 
@@ -217,10 +253,25 @@ float UTargetLockComponent::GetSignedRightSpeed() const
         return 0.0f;
     }
 
+    const FVector Right = OwnerActor->GetActorRightVector().GetSafeNormal2D();
+    if (CurrentTarget.IsValid())
+    {
+        if (const ACharacter* CharacterOwner = Cast<ACharacter>(OwnerActor))
+        {
+            FVector InputVector = CharacterOwner->GetLastMovementInputVector();
+            InputVector.Z = 0.0f;
+            if (!InputVector.IsNearlyZero())
+            {
+                const float ReferenceSpeed = CharacterOwner->GetCharacterMovement()
+                    ? CharacterOwner->GetCharacterMovement()->MaxWalkSpeed
+                    : OwnerActor->GetVelocity().Size2D();
+                return FVector::DotProduct(InputVector.GetSafeNormal2D(), Right) * ReferenceSpeed * FMath::Clamp(InputVector.Size2D(), 0.0f, 1.0f);
+            }
+        }
+    }
+
     FVector HorizontalVelocity = OwnerActor->GetVelocity();
     HorizontalVelocity.Z = 0.0f;
-
-    const FVector Right = OwnerActor->GetActorRightVector().GetSafeNormal2D();
     return FVector::DotProduct(HorizontalVelocity, Right);
 }
 
@@ -246,7 +297,6 @@ void UTargetLockComponent::GatherCandidateTargets(TArray<AActor*>& OutTargets) c
         return;
     }
 
-    // Prefer tag-driven discovery so non-pawn enemies (e.g. actor-based dummies) can be locked.
     if (!TargetableTag.IsNone())
     {
         TArray<AActor*> TaggedTargets;
@@ -493,7 +543,23 @@ void UTargetLockComponent::RefreshMovementFacingOverride()
     }
 
     const bool bIsGuarding = CachedCombatState.IsValid() && CachedCombatState->IsInState(ERPGCombatState::Guard);
-    const bool bShouldUseStrafeMode = CurrentTarget.IsValid() || bIsGuarding;
+    const bool bHasFocusedTarget = CurrentTarget.IsValid();
+    const bool bShouldUseStrafeMode = bHasFocusedTarget || bIsGuarding;
+
+    if (CachedLocomotion.IsValid())
+    {
+        if (bHasFocusedTarget && bUseFocusedMovementStyle)
+        {
+            CachedLocomotion->SetDesiredGait(ERPGLocomotionGait::Run);
+            CachedLocomotion->SetSpeedMultiplier(TEXT("LockOnFocus"), FocusedMovementSpeedMultiplier);
+        }
+        else
+        {
+            CachedLocomotion->ClearSpeedMultiplier(TEXT("LockOnFocus"));
+        }
+
+        CachedLocomotion->ClearCapabilityOverride(TEXT("LockOnFocus"), ERPGMovementCapability::Sprint);
+    }
 
     if (bShouldUseStrafeMode && !bMovementStrafeOverrideApplied)
     {
@@ -505,7 +571,6 @@ void UTargetLockComponent::RefreshMovementFacingOverride()
 
     if (bShouldUseStrafeMode)
     {
-        // Keep facing locked to camera/target so backward input backpedals instead of turning around.
         MoveComp->bOrientRotationToMovement = false;
         MoveComp->bUseControllerDesiredRotation = true;
         CharacterOwner->bUseControllerRotationYaw = true;
@@ -521,6 +586,25 @@ void UTargetLockComponent::RefreshMovementFacingOverride()
     MoveComp->bUseControllerDesiredRotation = bSavedUseControllerDesiredRotation;
     CharacterOwner->bUseControllerRotationYaw = bSavedUseControllerRotationYaw;
     bMovementStrafeOverrideApplied = false;
+}
+
+void UTargetLockComponent::HandleCurrentTargetDeath()
+{
+    if (BoundTargetStats.IsValid())
+    {
+        BoundTargetStats->OnDeath.RemoveDynamic(this, &UTargetLockComponent::HandleCurrentTargetDeath);
+        BoundTargetStats = nullptr;
+    }
+
+    CurrentTarget = nullptr;
+
+    if (bAutoRelockOnTargetLost && LockBestTarget())
+    {
+        return;
+    }
+
+    RefreshMovementFacingOverride();
+    OnLockTargetChanged.Broadcast(nullptr);
 }
 
 void UTargetLockComponent::RotateOwnerTowardTarget(float DeltaTime)
@@ -573,8 +657,6 @@ void UTargetLockComponent::UpdateControllerFacing(float DeltaTime)
     }
 
     const FRotator CurrentControlRotation = Controller->GetControlRotation();
-
-    // Preserve player camera pitch/roll; lock-on only steers yaw toward the target.
     const FRotator DesiredControlRotation(
         CurrentControlRotation.Pitch,
         ToTarget.Rotation().Yaw,
@@ -584,6 +666,3 @@ void UTargetLockComponent::UpdateControllerFacing(float DeltaTime)
 
     Controller->SetControlRotation(NewControlRotation);
 }
-
-
-
