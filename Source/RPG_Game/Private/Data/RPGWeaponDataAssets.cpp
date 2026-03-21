@@ -199,3 +199,8 @@ FName URPGWeaponInstanceDataAsset::ResolveSheathedSocketName() const
         ? FName(TEXT("sheathe"))
         : VisualDefinition.SheathedSocketName;
 }
+
+ERPGWeaponCarryAnchorType URPGWeaponInstanceDataAsset::ResolveSheathedCarryAnchor() const
+{
+    return VisualDefinition.SheathedCarryAnchor;
+}

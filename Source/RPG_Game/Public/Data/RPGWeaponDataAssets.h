@@ -23,6 +23,14 @@ enum class ERPGWeaponType : uint8
 };
 
 UENUM(BlueprintType)
+enum class ERPGWeaponCarryAnchorType : uint8
+{
+    Back UMETA(DisplayName = "Back"),
+    HipLeft UMETA(DisplayName = "Left Hip"),
+    HipRight UMETA(DisplayName = "Right Hip")
+};
+
+UENUM(BlueprintType)
 enum class ERPGAnimationSlot : uint8
 {
     Idle UMETA(DisplayName = "Idle"),
@@ -174,10 +182,16 @@ struct FRPGWeaponVisualDefinition
     FTransform EquippedRelativeTransform;
 
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon|Visual")
+    ERPGWeaponCarryAnchorType SheathedCarryAnchor = ERPGWeaponCarryAnchorType::Back;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon|Visual")
     FName SheathedSocketName = TEXT("sheathe");
 
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon|Visual")
     FTransform SheathedRelativeTransform;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon|Visual")
+    FTransform SheathedMeshRelativeTransform;
 
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon|Visual")
     TObjectPtr<UStaticMesh> PickupMesh = nullptr;
@@ -282,4 +296,8 @@ public:
 
     UFUNCTION(BlueprintPure, Category = "Weapon|Visual")
     FName ResolveSheathedSocketName() const;
+
+    UFUNCTION(BlueprintPure, Category = "Weapon|Visual")
+    ERPGWeaponCarryAnchorType ResolveSheathedCarryAnchor() const;
 };
+
