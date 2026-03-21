@@ -54,7 +54,7 @@ ARPGEnemyCharacter::ARPGEnemyCharacter()
     if (WeaponLoadoutComponent && !WeaponLoadoutComponent->EquippedWeaponInstance)
     {
         static ConstructorHelpers::FObjectFinder<URPGWeaponInstanceDataAsset> DefaultSwordWeapon(
-            TEXT("/Game/Core/Combat/Weapons/Sword/Data/DA_WeaponInstance_Sword_Base.DA_WeaponInstance_Sword_Base"));
+            TEXT("/Game/Core/Combat/Weapons/Sword/Data/Steel/DA_WeaponInstance_Sword_Steel.DA_WeaponInstance_Sword_Steel"));
         if (DefaultSwordWeapon.Succeeded())
         {
             WeaponLoadoutComponent->EquippedWeaponInstance = DefaultSwordWeapon.Object;
